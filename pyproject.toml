@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torsh"
+version = "0.1.0"
+description = "Transmission TUI client"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "torsh authors" }]
+dependencies = [
+    "textual>=0.60.0",
+    "transmission-rpc>=4.4.3",
+    "click>=8.1.7",
+    "pyyaml>=6.0.1",
+    "humanize>=4.9.0",
+]
+
+[project.scripts]
+torsh = "torsh.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+"torsh.ui" = ["styles.tcss"]
+
+

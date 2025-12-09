@@ -1,0 +1,25 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+
+# Virtual environments
+.venv/
+venv/
+.env
+
+# Poetry / pip artifacts
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+
+# Textual / runtime state
+.torsh/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+

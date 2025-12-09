@@ -1,0 +1,90 @@
+Screen {
+    background: #0b0f16;
+    color: #d9e0ee;
+}
+
+#main {
+    width: 100%;
+    height: 1fr;
+    padding: 0 1;
+}
+
+.panel-title {
+    background: linear-gradient(to right, #19324a, #0b0f16);
+    color: #9ce0ff;
+    text-style: bold;
+    padding: 0 1;
+}
+
+#left, #right {
+    height: 1fr;
+}
+
+#left {
+    width: 65%;
+    min-width: 60;
+    padding-right: 1;
+}
+
+#right {
+    width: 35%;
+    min-width: 40;
+}
+
+DataTable {
+    height: 1fr;
+    border: round #223349;
+}
+
+RichLog {
+    height: 10;
+    border: round #223349;
+    background: #0f1620;
+}
+
+#details {
+    height: 1fr;
+    border: round #223349;
+    background: #0f1620;
+    padding: 0 1;
+}
+
+#stats {
+    height: auto;
+    padding: 0 1;
+    color: #ffcc66;
+}
+
+Button.-primary {
+    background: #26c6da;
+    color: black;
+}
+
+Input {
+    border: round #223349;
+    background: #0f1620;
+}
+
+.modal-box {
+    border: tall #26c6da;
+    width: 80%;
+    max-width: 100;
+    background: #0f1620;
+    padding: 1 2;
+}
+
+#add-box, #move-box, #speed-box, #prio-box, #filter-box, #log-box, #help-box {
+    border: tall #26c6da;
+    width: 80%;
+    max-width: 100;
+    background: #0f1620;
+    padding: 1 2;
+}
+
+.buttons {
+    padding-top: 1;
+    align-horizontal: right;
+    width: 100%;
+}
+
+

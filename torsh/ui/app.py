@@ -80,7 +80,14 @@ def styled_ratio(ratio: float) -> Text:
 
 class BaseModalScreen(ModalScreen[T]):
     """Base class for modal screens."""
-    pass
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+    ]
+
+    def action_cancel(self) -> None:
+        """Close modal on escape."""
+        self.dismiss(None)
 
 
 class AddTorrentScreen(BaseModalScreen[tuple[str, str] | None]):
@@ -385,6 +392,7 @@ class TorshApp(App):
         self.filter_text: str = config.ui.filter_text
         
         self._refresh_timer: Any = None
+        self._modal_depth: int = 0
         self._speed_down_hist: list[float] = [0.0] * 60
         self._speed_up_hist: list[float] = [0.0] * 60
         self._completed_ids: set[int] = set()  # Track completed torrents
@@ -493,6 +501,10 @@ class TorshApp(App):
         self._persist_ui()
 
     async def refresh_all(self) -> None:
+        # Пропускаем автообновление, пока открыт модальный экран,
+        # чтобы не дёргать недоступные виджеты и не сбивать ввод.
+        if self._modal_depth:
+            return
         if not await self._check_connection():
             return
         await asyncio.gather(
@@ -782,6 +794,12 @@ class TorshApp(App):
     # Actions
     # -------------------------------------------------------------------------
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Block app-level actions while modal is open."""
+        if self._modal_depth > 0:
+            return False
+        return True
+
     def action_cursor_down(self) -> None:
         self.query_one("#table", DataTable).action_cursor_down()
 
@@ -983,21 +1001,23 @@ class TorshApp(App):
         return next((t for t in self.torrents if t.id == self.selected_id), None)
 
     async def _show_modal(self, screen: ModalScreen[T]) -> T | None:
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[T | None] = loop.create_future()
-        original_dismiss = screen.dismiss
-
-        def wrapped_dismiss(result: T | None = None) -> None:
-            if not future.done():
-                future.set_result(result)
-            original_dismiss(result)
-
-        screen.dismiss = wrapped_dismiss  # type: ignore
+        # Помечаем, что мы внутри модального окна и временно останавливаем автообновление.
+        self._modal_depth += 1
+        refresh_interval = self.refresh_interval
         try:
-            await self.push_screen(screen)
-            return await future
+            return await self.push_screen_wait(screen)
         except Exception:
             return None
+        finally:
+            # Возобновляем autorefresh только после закрытия всех модалок.
+            self._modal_depth = max(0, self._modal_depth - 1)
+            if self._modal_depth == 0:
+                # Перезапускаем интервал, если он был остановлен или упал.
+                try:
+                    if self._refresh_timer is None or self._refresh_timer.callback != self.refresh_all:
+                        self._refresh_timer = self.set_interval(refresh_interval, self.refresh_all)
+                except Exception:
+                    self._refresh_timer = self.set_interval(refresh_interval, self.refresh_all)
 
     def _persist_ui(self) -> None:
         self.config.ui.refresh_interval = self.refresh_interval

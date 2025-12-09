@@ -72,7 +72,14 @@ class TransmissionController:
         return views
 
     async def session_stats(self):
-        return await self._to_thread(self.client.get_session_stats)
+        # Support both get_session_stats (preferred) and older clients without it.
+        try:
+            return await self._to_thread(self.client.get_session_stats)
+        except AttributeError:
+            getter = getattr(self.client, "session_stats", None)
+            if callable(getter):
+                return await self._to_thread(getter)
+            return await self._to_thread(self.client.get_session)
 
     async def add(self, link: str, download_dir: Optional[str] = None) -> Torrent:
         return await self._to_thread(
@@ -149,6 +156,33 @@ class TransmissionController:
         if getattr(torrent, "upload_limited", False) is False:
             up = 0
         return {"down": int(down), "up": int(up)}
+
+    async def get_trackers(self, torrent_id: int) -> list[dict]:
+        """Get tracker information for a torrent."""
+        torrent = await self._to_thread(self.client.get_torrent, torrent_id)
+        trackers = getattr(torrent, "tracker_stats", None)
+        if trackers is None:
+            trackers = getattr(torrent, "trackers", [])
+        
+        result = []
+        for t in trackers or []:
+            if hasattr(t, "__dict__"):
+                result.append({
+                    "host": getattr(t, "host", getattr(t, "announce", "unknown")),
+                    "status": getattr(t, "last_announce_result", "unknown"),
+                    "peers": getattr(t, "last_announce_peer_count", 0),
+                    "seeders": getattr(t, "seeder_count", 0),
+                    "leechers": getattr(t, "leecher_count", 0),
+                })
+            elif isinstance(t, dict):
+                result.append({
+                    "host": t.get("host", t.get("announce", "unknown")),
+                    "status": t.get("lastAnnounceResult", "unknown"),
+                    "peers": t.get("lastAnnouncePeerCount", 0),
+                    "seeders": t.get("seederCount", 0),
+                    "leechers": t.get("leecherCount", 0),
+                })
+        return result
 
     def _map_torrent(self, t: Torrent) -> TorrentView:
         eta = "—"

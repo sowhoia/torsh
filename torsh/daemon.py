@@ -1,12 +1,13 @@
 import os
 import shutil
 import subprocess
-import sys
 import time
+import socket
+import json
 from pathlib import Path
 from typing import Iterable
 
-from .config import AppConfig
+from .config import AppConfig, save_config
 from .logging import get_logger
 
 
@@ -85,7 +86,40 @@ def ensure_transmission_available(config: AppConfig) -> bool:
     return shutil.which(config.daemon.binary) is not None
 
 
-def _build_daemon_args(config: AppConfig) -> list[str]:
+def _has_flag(args: list[str], flag: str) -> bool:
+    return any(a == flag or a.startswith(f"{flag}=") for a in args)
+
+
+def _pick_free_port(start: int, attempts: int = 10) -> int:
+    port = start
+    for _ in range(attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(("0.0.0.0", port))
+                return port
+            except OSError:
+                port += 1
+    return start
+
+
+def _write_settings_ports(cfg_dir: Path, rpc_port: int, peer_port: int | None) -> None:
+    settings_path = cfg_dir / "settings.json"
+    data: dict = {}
+    if settings_path.exists():
+        try:
+            data = json.loads(settings_path.read_text() or "{}")
+        except Exception:
+            data = {}
+    # Apply ports
+    data["rpc-port"] = rpc_port
+    if peer_port:
+        data["peer-port"] = peer_port
+        data["peer-port-random-on-start"] = False
+    settings_path.write_text(json.dumps(data, indent=2))
+
+
+def _build_daemon_args(config: AppConfig, peer_port: int | None) -> list[str]:
     cfg_dir = config.paths.config_dir
     download_dir = config.paths.download_dir
     cfg_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +134,10 @@ def _build_daemon_args(config: AppConfig) -> list[str]:
         str(download_dir),
         "--log-info",
     ]
-    args.extend(config.daemon.extra_args or [])
+    extra = config.daemon.extra_args or []
+    if peer_port and not _has_flag(extra, "--peerport"):
+        args.extend(["--peerport", str(peer_port)])
+    args.extend(extra)
     return args
 
 
@@ -122,7 +159,21 @@ def maybe_start_daemon(config: AppConfig, wait_seconds: float = 2.5) -> None:
         LOG.warning("Binary transmission-daemon not found: %s", config.daemon.binary)
         return
 
-    args = _build_daemon_args(config)
+    # Pick ports if defaults are occupied
+    chosen_rpc_port = _pick_free_port(config.rpc.port)
+    if chosen_rpc_port != config.rpc.port:
+        LOG.warning("RPC port %s busy, switching to %s", config.rpc.port, chosen_rpc_port)
+        config.rpc.port = chosen_rpc_port
+        save_config(config)
+
+    chosen_peer_port = _pick_free_port(51413)
+    if chosen_peer_port != 51413:
+        LOG.warning("Peer port 51413 busy, switching to %s", chosen_peer_port)
+
+    # Write ports into settings.json so daemon picks them up (rpc-port/peer-port)
+    _write_settings_ports(config.paths.config_dir, chosen_rpc_port, chosen_peer_port)
+
+    args = _build_daemon_args(config, chosen_peer_port)
     log_file = config.daemon.log_path
     log_file.parent.mkdir(parents=True, exist_ok=True)
     log = log_file.open("a", encoding="utf-8")

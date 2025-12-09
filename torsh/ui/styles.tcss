@@ -1,90 +1,326 @@
+/*
+ * Torsh TUI Stylesheet - Enhanced
+ * Theme: Tokyo Night
+ * 
+ * Note: Variables prefixed with 'torsh-' to avoid Textual conflicts
+ */
+
+/* ==========================================================================
+   THEME VARIABLES
+   ========================================================================== */
+
+$torsh-bg: #1a1b26;
+$torsh-fg: #a9b1d6;
+$torsh-panel: #24283b;
+$torsh-border: #414868;
+$torsh-accent: #7aa2f7;
+$torsh-success: #9ece6a;
+$torsh-warning: #e0af68;
+$torsh-error: #f7768e;
+$torsh-muted: #565f89;
+
+/* Zebra striping */
+$torsh-zebra-light: #1e2030;
+$torsh-zebra-dark: #1a1b26;
+
+/* ==========================================================================
+   GLOBAL STYLES
+   ========================================================================== */
+
 Screen {
-    background: #0b0f16;
-    color: #d9e0ee;
+    background: $torsh-bg;
+    color: $torsh-fg;
 }
 
-#main {
-    width: 100%;
-    height: 1fr;
+/* ==========================================================================
+   HEADER & STATUS BAR
+   ========================================================================== */
+
+#app-header {
+    height: 3;
+    dock: top;
+    background: $torsh-panel;
+    border-bottom: solid $torsh-border;
     padding: 0 1;
+    layout: horizontal;
+    align-vertical: middle;
 }
 
-.panel-title {
-    background: linear-gradient(to right, #19324a, #0b0f16);
-    color: #9ce0ff;
+.app-title {
     text-style: bold;
+    color: $torsh-accent;
+    width: auto;
+    margin-right: 1;
+}
+
+#status-bar {
+    width: auto;
+    min-width: 30;
+    padding: 0 2;
+    color: $torsh-fg;
+}
+
+#header-stats {
+    width: 1fr;
+    height: 100%;
+    align-horizontal: right;
+    layout: horizontal;
+}
+
+.stat-box {
+    width: auto;
+    height: 100%;
     padding: 0 1;
+    border-left: solid $torsh-border;
+    align-vertical: middle;
+    layout: horizontal;
 }
 
-#left, #right {
+.stat-label {
+    color: $torsh-muted;
+}
+
+/* ==========================================================================
+   SPARKLINES
+   ========================================================================== */
+
+Sparkline {
+    width: 15;
+    height: 100%;
+    margin: 0 1;
+    color: $torsh-success;
+}
+
+Sparkline.-upload {
+    color: $torsh-warning;
+}
+
+/* ==========================================================================
+   MAIN CONTENT AREA
+   ========================================================================== */
+
+#content {
     height: 1fr;
+    layout: horizontal;
 }
 
-#left {
-    width: 65%;
-    min-width: 60;
-    padding-right: 1;
+#torrent-list-container {
+    width: 60%;
+    height: 100%;
+    border-right: solid $torsh-border;
+    background: $torsh-bg;
 }
 
-#right {
-    width: 35%;
-    min-width: 40;
+#details-container {
+    width: 40%;
+    height: 100%;
+    background: $torsh-bg;
+    layout: vertical;
 }
+
+/* ==========================================================================
+   DATA TABLES
+   ========================================================================== */
 
 DataTable {
+    background: $torsh-bg;
+    border: none;
     height: 1fr;
-    border: round #223349;
 }
 
-RichLog {
-    height: 10;
-    border: round #223349;
-    background: #0f1620;
+DataTable > .datatable--header {
+    background: $torsh-panel;
+    color: $torsh-accent;
+    text-style: bold;
 }
 
-#details {
+DataTable > .datatable--cursor {
+    background: $torsh-accent;
+    color: $torsh-bg;
+    text-style: bold;
+}
+
+DataTable > .datatable--even-row {
+    background: $torsh-zebra-light;
+}
+
+DataTable > .datatable--odd-row {
+    background: $torsh-zebra-dark;
+}
+
+#files-table, #trackers-table {
     height: 1fr;
-    border: round #223349;
-    background: #0f1620;
-    padding: 0 1;
+    width: 100%;
+    border: none;
 }
 
-#stats {
+/* ==========================================================================
+   TABBED CONTENT
+   ========================================================================== */
+
+TabbedContent {
+    height: 1fr;
+}
+
+Tabs {
+    background: $torsh-panel;
+    border-bottom: solid $torsh-border;
+    dock: top;
+}
+
+Tab {
+    color: $torsh-muted;
+    padding: 0 2;
+}
+
+Tab:hover {
+    color: $torsh-fg;
+}
+
+Tab.-active {
+    color: $torsh-accent;
+    border-bottom: solid $torsh-accent;
+    text-style: bold;
+}
+
+TabPane {
+    padding: 1;
+    background: $torsh-bg;
+}
+
+#details-view {
+    padding: 1;
+}
+
+/* ==========================================================================
+   MODALS
+   ========================================================================== */
+
+ModalScreen,
+BaseModalScreen,
+AddTorrentScreen,
+ConfirmScreen,
+MoveScreen,
+SpeedScreen,
+PriorityScreen,
+FilterScreen,
+HelpScreen {
+    align: center middle;
+    background: rgba(0, 0, 0, 0.7);
+}
+
+.modal-container {
+    width: 60;
     height: auto;
-    padding: 0 1;
-    color: #ffcc66;
+    min-height: 10;
+    background: $torsh-panel;
+    border: tall $torsh-accent;
+    padding: 1 2;
+    layout: vertical;
+}
+
+.modal-title {
+    text-style: bold;
+    color: $torsh-accent;
+    text-align: center;
+    padding-bottom: 1;
+    border-bottom: solid $torsh-border;
+    margin-bottom: 1;
+}
+
+.modal-label {
+    text-align: center;
+    padding: 1;
+}
+
+/* ==========================================================================
+   FORM ELEMENTS
+   ========================================================================== */
+
+Input {
+    background: $torsh-bg;
+    border: solid $torsh-border;
+    color: $torsh-fg;
+    margin: 1 0;
+    width: 100%;
+}
+
+Input:focus {
+    border: solid $torsh-accent;
+}
+
+Button {
+    background: $torsh-border;
+    color: $torsh-fg;
+    border: none;
+    margin: 0 1;
+    min-width: 8;
+}
+
+Button:hover {
+    background: $torsh-accent;
+    color: $torsh-bg;
 }
 
 Button.-primary {
-    background: #26c6da;
-    color: black;
-}
-
-Input {
-    border: round #223349;
-    background: #0f1620;
-}
-
-.modal-box {
-    border: tall #26c6da;
-    width: 80%;
-    max-width: 100;
-    background: #0f1620;
-    padding: 1 2;
-}
-
-#add-box, #move-box, #speed-box, #prio-box, #filter-box, #log-box, #help-box {
-    border: tall #26c6da;
-    width: 80%;
-    max-width: 100;
-    background: #0f1620;
-    padding: 1 2;
+    background: $torsh-accent;
+    color: $torsh-bg;
+    text-style: bold;
 }
 
 .buttons {
-    padding-top: 1;
-    align-horizontal: right;
+    margin-top: 1;
+    align-horizontal: center;
     width: 100%;
 }
 
+SelectionList {
+    height: 12;
+    background: $torsh-bg;
+    border: solid $torsh-border;
+    scrollbar-gutter: stable;
+}
 
+/* ==========================================================================
+   MODAL OVERRIDES
+   ========================================================================== */
+
+#add-box,
+#move-box,
+#speed-box,
+#prio-box,
+#filter-box,
+#help-box,
+#confirm-box {
+    border: tall $torsh-accent;
+    width: 90%;
+    max-width: 80;
+    background: $torsh-panel;
+    padding: 1 2;
+}
+
+#help-box {
+    max-width: 60;
+}
+
+/* ==========================================================================
+   NOTIFICATIONS (Toast)
+   ========================================================================== */
+
+Toast {
+    background: $torsh-panel;
+    color: $torsh-fg;
+    border: solid $torsh-accent;
+}
+
+Toast.-information {
+    border: solid $torsh-success;
+}
+
+Toast.-warning {
+    border: solid $torsh-warning;
+}
+
+Toast.-error {
+    border: solid $torsh-error;
+}

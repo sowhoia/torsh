@@ -1,18 +1,35 @@
+"""
+Torsh TUI Application - Enhanced Version
+
+A polished, feature-rich Textual-based torrent client UI.
+"""
 from __future__ import annotations
 
 import asyncio
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Any, TypeVar
 
-from textual import events
+from rich.progress_bar import ProgressBar
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
-from textual.message import Message
+from textual.containers import Container, Horizontal
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Markdown, RichLog, SelectionList, Static
+from textual.widgets import (
+    Button,
+    DataTable,
+    Footer,
+    Input,
+    Label,
+    Markdown,
+    SelectionList,
+    Sparkline,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 from transmission_rpc.error import TransmissionError
 
 import humanize
@@ -22,75 +39,106 @@ from ..config import AppConfig, save_config
 from ..daemon import maybe_start_daemon
 from ..logging import get_logger
 
-
 LOG = get_logger(__name__)
 
+T = TypeVar("T")
 
-def _fmt_percent(value: float) -> str:
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def format_percent(value: float) -> str:
+    """Format a percentage value with fixed width."""
     return f"{value:5.1f}%"
 
 
-def _status_label(status: str) -> str:
-    mapping = {
-        "downloading": "⬇️  Downloading",
-        "seeding": "⬆️  Seeding",
-        "stopped": "⏸  Stopped",
-        "paused": "⏸  Paused",
-        "checking": "🔎 Checking",
-        "queued": "⏳ Queued",
+def styled_status(status: str) -> Text:
+    """Return a styled Text object for torrent status."""
+    styles = {
+        "downloading": ("⬇", "bold green"),
+        "seeding": ("⬆", "bold blue"),
+        "stopped": ("⏸", "dim"),
+        "paused": ("⏸", "dim yellow"),
+        "checking": ("⟳", "magenta"),
+        "queued": ("⏳", "cyan"),
+        "error": ("⚠", "bold red"),
     }
-    return mapping.get(status, status)
+    icon, style = styles.get(status.lower(), ("?", "default"))
+    return Text(f"{icon} {status.title()}", style=style)
 
 
-class AddTorrentScreen(ModalScreen[tuple[str, str] | None]):
-    DEFAULT_CSS = """
-    AddTorrentScreen {
-        align: center middle;
-    }
-    #add-box {
-        border: tall $accent;
-        width: 80%;
-        max-width: 100;
-        background: $panel;
-        padding: 1 2;
-    }
-    """
+def styled_ratio(ratio: float) -> Text:
+    """Return a styled Text object for ratio."""
+    style = "bold green" if ratio >= 1.0 else "bold red"
+    return Text(f"{ratio:.2f}", style=style, justify="right")
 
-    def __init__(self, download_dir: str):
+
+# =============================================================================
+# Modal Screens
+# =============================================================================
+
+class BaseModalScreen(ModalScreen[T]):
+    """Base class for modal screens."""
+    pass
+
+
+class AddTorrentScreen(BaseModalScreen[tuple[str, str] | None]):
+    """Modal for adding a new torrent."""
+
+    def __init__(self, download_dir: str) -> None:
         super().__init__()
         self.download_dir = download_dir
 
     def compose(self) -> ComposeResult:
-        with Container(id="add-box"):
-            yield Static("Add torrent or magnet", classes="title")
-            yield Label("Link or path to .torrent")
-            yield Input(placeholder="magnet:?xt=urn:btih:... or /path/file.torrent", id="link")
-            yield Label("Download directory")
+        with Container(classes="modal-container", id="add-box"):
+            yield Static("Add Torrent", classes="modal-title")
+            yield Label("Magnet Link or File Path:")
+            yield Input(
+                placeholder="magnet:?xt=urn:btih:... or /path/to/file.torrent",
+                id="link"
+            )
+            yield Label("Download Directory:")
             yield Input(value=self.download_dir, id="dir")
             with Horizontal(classes="buttons"):
                 yield Button("Add", variant="primary", id="ok")
                 yield Button("Cancel", id="cancel")
 
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#link", Input).focus()
+        except Exception:
+            pass
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._submit()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "ok":
-            link = self.query_one("#link", Input).value.strip()
-            directory = self.query_one("#dir", Input).value.strip()
-            if link:
-                self.dismiss((link, directory or self.download_dir))
-            else:
-                self.dismiss(None)
+            self._submit()
+        else:
+            self.dismiss(None)
+
+    def _submit(self) -> None:
+        link = self.query_one("#link", Input).value.strip()
+        directory = self.query_one("#dir", Input).value.strip()
+        if link:
+            self.dismiss((link, directory or self.download_dir))
         else:
             self.dismiss(None)
 
 
-class ConfirmScreen(ModalScreen[bool]):
-    def __init__(self, text: str):
+class ConfirmScreen(BaseModalScreen[bool]):
+    """Modal for yes/no confirmation."""
+
+    def __init__(self, message: str) -> None:
         super().__init__()
-        self.text = text
+        self.message = message
 
     def compose(self) -> ComposeResult:
-        with Container(id="confirm-box"):
-            yield Static(self.text)
+        with Container(classes="modal-container", id="confirm-box"):
+            yield Static("Confirmation", classes="modal-title")
+            yield Label(self.message, classes="modal-label")
             with Horizontal(classes="buttons"):
                 yield Button("Yes", id="yes", variant="primary")
                 yield Button("No", id="no")
@@ -99,15 +147,18 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "yes")
 
 
-class MoveScreen(ModalScreen[str | None]):
-    def __init__(self, current: str):
+class MoveScreen(BaseModalScreen[str | None]):
+    """Modal for moving torrent data."""
+
+    def __init__(self, current_dir: str) -> None:
         super().__init__()
-        self.current = current
+        self.current_dir = current_dir
 
     def compose(self) -> ComposeResult:
-        with Container(id="move-box"):
-            yield Static("New download directory")
-            yield Input(value=self.current, id="newdir")
+        with Container(classes="modal-container", id="move-box"):
+            yield Static("Move Data", classes="modal-title")
+            yield Label("New Location:")
+            yield Input(value=self.current_dir, id="newdir")
             with Horizontal(classes="buttons"):
                 yield Button("Move", id="ok", variant="primary")
                 yield Button("Cancel", id="cancel")
@@ -115,66 +166,78 @@ class MoveScreen(ModalScreen[str | None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "ok":
             new_dir = self.query_one("#newdir", Input).value.strip()
-            self.dismiss(new_dir or self.current)
+            self.dismiss(new_dir or self.current_dir)
         else:
             self.dismiss(None)
 
 
-class SpeedScreen(ModalScreen[tuple[int | None, int | None] | None]):
-    def __init__(self, down: int, up: int):
+class SpeedScreen(BaseModalScreen[tuple[int, int] | None]):
+    """Modal for setting speed limits."""
+
+    PRESETS = {
+        "preset_off": (0, 0),
+        "preset_stream": (8192, 2048),
+        "preset_save": (256, 64),
+    }
+
+    def __init__(self, down: int, up: int) -> None:
         super().__init__()
         self.down = down
         self.up = up
 
     def compose(self) -> ComposeResult:
-        with Container(id="speed-box"):
-            yield Static("Speed limits (KiB/s). 0 or empty = disable")
+        with Container(classes="modal-container", id="speed-box"):
+            yield Static("Speed Limits (KiB/s)", classes="modal-title")
             yield Label(f"Current: ↓ {self.down} / ↑ {self.up}")
-            yield Input(value=str(self.down), placeholder="down KiB/s", id="down")
-            yield Input(value=str(self.up), placeholder="up KiB/s", id="up")
+            yield Input(value=str(self.down), placeholder="Download (0=unlimited)", id="down")
+            yield Input(value=str(self.up), placeholder="Upload (0=unlimited)", id="up")
             with Horizontal(classes="buttons"):
                 yield Button("Apply", id="ok", variant="primary")
-                yield Button("No limit", id="preset_off")
-                yield Button("Stream", id="preset_stream")
-                yield Button("Save", id="preset_save")
+                yield Button("∞ Off", id="preset_off")
+                yield Button("🎬 Stream", id="preset_stream")
+                yield Button("💾 Save", id="preset_save")
                 yield Button("Cancel", id="cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id != "ok":
-            if event.button.id == "preset_off":
-                self.dismiss((0, 0))
-                return
-            if event.button.id == "preset_stream":
-                self.dismiss((8192, 2048))  # ~8 MiB/s down, ~2 MiB/s up
-                return
-            if event.button.id == "preset_save":
-                self.dismiss((256, 64))  # modest saving profile
-                return
-            self.dismiss(None)
+        btn_id = event.button.id
+        if btn_id in self.PRESETS:
+            self.dismiss(self.PRESETS[btn_id])
             return
-        try:
-            down_raw = self.query_one("#down", Input).value.strip()
-            up_raw = self.query_one("#up", Input).value.strip()
-            down = int(down_raw) if down_raw else 0
-            up = int(up_raw) if up_raw else 0
-            self.dismiss((down, up))
-        except ValueError:
+        if btn_id == "ok":
+            try:
+                down = int(self.query_one("#down", Input).value.strip() or "0")
+                up = int(self.query_one("#up", Input).value.strip() or "0")
+                self.dismiss((down, up))
+            except ValueError:
+                self.dismiss(None)
+        else:
             self.dismiss(None)
 
 
-class PriorityScreen(ModalScreen[tuple[list[int], list[int], list[int]] | None]):
-    def __init__(self, files: dict[int, dict]):
+class PriorityScreen(BaseModalScreen[tuple[list[int], list[int], list[int]] | None]):
+    """Modal for setting file priorities."""
+
+    def __init__(self, files: dict[int, dict[str, Any]]) -> None:
         super().__init__()
         self.files = files
 
     def compose(self) -> ComposeResult:
-        with Container(id="prio-box"):
-            yield Static("Select High / Low. Not selected => Normal.")
-            options = [(f"{idx}: {info.get('name','')}", str(idx)) for idx, info in self.files.items()]
-            yield Label("High priority")
-            yield SelectionList[str](*[(label, key, False) for label, key in options], id="high")
-            yield Label("Low priority")
-            yield SelectionList[str](*[(label, key, False) for label, key in options], id="low")
+        with Container(classes="modal-container", id="prio-box"):
+            yield Static("File Priority", classes="modal-title")
+            options = [
+                (f"{idx}: {info.get('name', 'Unknown')[:40]}", str(idx))
+                for idx, info in self.files.items()
+            ]
+            yield Label("High Priority:")
+            yield SelectionList[str](
+                *[(label, key, False) for label, key in options],
+                id="high"
+            )
+            yield Label("Low Priority:")
+            yield SelectionList[str](
+                *[(label, key, False) for label, key in options],
+                id="low"
+            )
             with Horizontal(classes="buttons"):
                 yield Button("Apply", id="ok", variant="primary")
                 yield Button("Cancel", id="cancel")
@@ -191,46 +254,17 @@ class PriorityScreen(ModalScreen[tuple[list[int], list[int], list[int]] | None])
         self.dismiss((high, normal, low))
 
 
-class LogScreen(ModalScreen[None]):
-    def __init__(self, path: Path):
+class FilterScreen(BaseModalScreen[str | None]):
+    """Modal for filtering torrents."""
+
+    def __init__(self, current_filter: str) -> None:
         super().__init__()
-        self.path = path
-        self._timer = None
+        self.current_filter = current_filter
 
     def compose(self) -> ComposeResult:
-        with Container(id="log-box"):
-            yield Static(f"daemon log: {self.path}")
-            yield Markdown(self._read_tail(), id="daemon-log")
-            with Horizontal(classes="buttons"):
-                yield Button("Close", id="close", variant="primary")
-
-    def on_mount(self) -> None:
-        self._timer = self.set_interval(2.0, self._refresh)
-
-    def _refresh(self) -> None:
-        md = self.query_one("#daemon-log", Markdown)
-        md.update(self._read_tail())
-
-    def _read_tail(self) -> str:
-        if not self.path.exists():
-            return "_no log file yet_"
-        lines = self.path.read_text(errors="ignore").splitlines()
-        tail = "\n".join(lines[-200:])
-        return f"```\n{tail}\n```"
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(None)
-
-
-class FilterScreen(ModalScreen[str | None]):
-    def __init__(self, current: str):
-        super().__init__()
-        self.current = current
-
-    def compose(self) -> ComposeResult:
-        with Container(id="filter-box"):
-            yield Static("Filter by name (case-insensitive)")
-            yield Input(value=self.current, placeholder="text to match", id="flt")
+        with Container(classes="modal-container", id="filter-box"):
+            yield Static("Filter Torrents", classes="modal-title")
+            yield Input(value=self.current_filter, placeholder="Filter by name...", id="flt")
             with Horizontal(classes="buttons"):
                 yield Button("Apply", id="ok", variant="primary")
                 yield Button("Clear", id="clear")
@@ -245,17 +279,42 @@ class FilterScreen(ModalScreen[str | None]):
             self.dismiss(None)
 
 
-class HelpScreen(ModalScreen[None]):
-    def compose(self) -> ComposeResult:
-        with Container(id="help-box"):
-            yield Static("Controls")
-            help_md = """
-`a` add · `space` pause/resume · `d` delete · `g` move · `r` refresh
-`s` speed limits · `t` torrent speed · `p` file priorities · `l` daemon log
-`/` filter by name · `c` status filter · `o` progress filter
-`1..8` sort by column · `]` faster · `[` slower · `?` help · `q` quit
+class HelpScreen(BaseModalScreen[None]):
+    """Modal displaying keyboard shortcuts."""
+
+    HELP_TEXT = """
+## Navigation
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Scroll Down/Up |
+| `G` | Jump to Bottom |
+| `Tab` | Switch Panes |
+
+## Actions
+| Key | Action |
+|-----|--------|
+| `a` | Add Torrent |
+| `d` | Delete Torrent |
+| `Space` | Pause/Resume |
+| `r` | Refresh |
+| `q` | Quit |
+
+## Management
+| Key | Action |
+|-----|--------|
+| `g` | Move Data |
+| `s` | Global Speed |
+| `t` | Torrent Speed |
+| `p` | File Priorities |
+| `/` | Filter by Name |
+| `c` | Cycle Status Filter |
+| `o` | Cycle Progress Filter |
 """
-            yield Markdown(help_md)
+
+    def compose(self) -> ComposeResult:
+        with Container(classes="modal-container", id="help-box"):
+            yield Static("⌨️ Keyboard Shortcuts", classes="modal-title")
+            yield Markdown(self.HELP_TEXT)
             with Horizontal(classes="buttons"):
                 yield Button("Close", id="close", variant="primary")
 
@@ -263,88 +322,167 @@ class HelpScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+# =============================================================================
+# Main Application
+# =============================================================================
+
 class TorshApp(App):
-    CSS_PATH = "ui/styles.tcss"
+    """Main Torsh TUI Application."""
+
+    CSS_PATH = "styles.tcss"
+    
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("a", "add", "Add"),
         Binding("d", "delete", "Delete"),
         Binding("space", "toggle", "Pause/Start"),
         Binding("r", "refresh", "Refresh"),
-        Binding("g", "move", "Move dir"),
-        Binding("s", "speed", "Global limits"),
-        Binding("t", "torrent_speed", "Torrent limit"),
-        Binding("p", "priority", "File priority"),
-        Binding("l", "log", "Daemon log"),
-        Binding("/", "filter", "Filter"),
-        Binding("c", "status_filter", "Status filter"),
-        Binding("o", "progress_filter", "Progress filter"),
-        Binding("]", "faster", "Faster"),
-        Binding("[", "slower", "Slower"),
         Binding("?", "help", "Help"),
-        Binding("1", "sort1", "Sort ID"),
-        Binding("2", "sort2", "Sort Name"),
-        Binding("3", "sort3", "Sort %"),
-        Binding("4", "sort4", "Sort ETA"),
-        Binding("5", "sort5", "Sort ↓"),
-        Binding("6", "sort6", "Sort ↑"),
-        Binding("7", "sort7", "Sort Ratio"),
-        Binding("8", "sort8", "Sort Status"),
+        Binding("g", "move", "Move"),
+        Binding("s", "speed", "Speed"),
+        Binding("t", "torrent_speed", "T-Speed"),
+        Binding("p", "priority", "Priority"),
+        Binding("/", "filter", "Filter"),
+        Binding("c", "status_filter", "Status"),
+        Binding("o", "progress_filter", "Progress"),
+        Binding("]", "faster", show=False),
+        Binding("[", "slower", show=False),
+        Binding("j", "cursor_down", show=False),
+        Binding("k", "cursor_up", show=False),
+        Binding("G", "cursor_bottom", show=False),
+        Binding("1", "sort_1", show=False),
+        Binding("2", "sort_2", show=False),
+        Binding("3", "sort_3", show=False),
+        Binding("4", "sort_4", show=False),
+        Binding("5", "sort_5", show=False),
+        Binding("6", "sort_6", show=False),
+        Binding("7", "sort_7", show=False),
+        Binding("8", "sort_8", show=False),
     ]
 
-    download_speed = reactive("0 B/s")
-    upload_speed = reactive("0 B/s")
+    # Reactive state
+    download_speed = reactive(0.0)
+    upload_speed = reactive(0.0)
     active_count = reactive(0)
     paused_count = reactive(0)
-    connection_issue = reactive[str | None](None)
+    connection_ok = reactive(True)
     refresh_interval = reactive(2.5)
-    sort_column = reactive[int | None](None)
+    sort_column: reactive[int | None] = reactive(None)
     sort_desc = reactive(False)
-    status_filter_value = reactive("any")  # any, active, paused, error
-    progress_filter_value = reactive("any")  # any, done, under50
-    disk_free = reactive("n/a")
-    disk_total = reactive("n/a")
+    status_filter_value = reactive("any")
+    progress_filter_value = reactive("any")
+    disk_free = reactive(0)
+    disk_total = reactive(1)
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig) -> None:
         super().__init__()
         self.config = config
         self.controller = TransmissionController(config)
+        
         self.torrents: list[TorrentView] = []
         self.filtered: list[TorrentView] = []
-        self.selected_id: Optional[int] = None
+        self.selected_id: int | None = None
         self.filter_text: str = config.ui.filter_text
-        self._refresh_timer = None
-        self._speed_down_hist: list[float] = []
-        self._speed_up_hist: list[float] = []
-        # restore UI state
+        
+        self._refresh_timer: Any = None
+        self._speed_down_hist: list[float] = [0.0] * 60
+        self._speed_up_hist: list[float] = [0.0] * 60
+        self._completed_ids: set[int] = set()  # Track completed torrents
+        
+        # Restore state
         self.refresh_interval = config.ui.refresh_interval
         self.sort_column = config.ui.sort_column
         self.sort_desc = config.ui.sort_desc
         self.status_filter_value = config.ui.status_filter
         self.progress_filter_value = config.ui.progress_filter
 
+    # -------------------------------------------------------------------------
+    # Compose & Mount
+    # -------------------------------------------------------------------------
+
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        with Container(id="main"):
-            with Horizontal():
-                with Vertical(id="left"):
-                    yield Static("Torrents", classes="panel-title")
-                    yield DataTable(id="table", zebra_stripes=True)
-                    yield RichLog(id="log", highlight=True, markup=True)
-                with Vertical(id="right"):
-                    yield Static("Details", classes="panel-title")
-                    yield Markdown("", id="details", code_theme="dracula")
-                    yield Markdown("", id="graphs")
-                    yield Static(id="stats")
+        # Header with status bar
+        with Container(id="app-header"):
+            yield Label("TORSH", classes="app-title")
+            yield Static("", id="status-bar")
+            with Horizontal(id="header-stats"):
+                with Horizontal(classes="stat-box"):
+                    yield Label("Disk ", classes="stat-label")
+                    yield Static("", id="disk-bar", markup=False)
+                with Horizontal(classes="stat-box"):
+                    yield Label("↓ ", classes="stat-label")
+                    yield Sparkline(self._speed_down_hist, summary_function=max, classes="-download")
+                with Horizontal(classes="stat-box"):
+                    yield Label("↑ ", classes="stat-label")
+                    yield Sparkline(self._speed_up_hist, summary_function=max, classes="-upload")
+
+        # Main content
+        with Container(id="content"):
+            with Container(id="torrent-list-container"):
+                yield DataTable(id="table", zebra_stripes=True, cursor_type="row")
+            with Container(id="details-container"):
+                with TabbedContent(initial="info"):
+                    with TabPane("Info", id="info"):
+                        yield Markdown("", id="details-view")
+                    with TabPane("Files", id="files"):
+                        yield DataTable(id="files-table", cursor_type="row")
+                    with TabPane("Trackers", id="trackers"):
+                        yield DataTable(id="trackers-table", cursor_type="row")
+
         yield Footer()
 
     async def on_mount(self) -> None:
+        # Setup main table
         table = self.query_one("#table", DataTable)
-        table.add_columns("ID", "Name", "Done", "ETA", "↓", "↑", "Ratio", "Status")
-        table.cursor_type = "row"
-        table.zebra_stripes = True
+        table.add_columns("ID", "Name", "Progress", "ETA", "↓", "↑", "Ratio", "Status")
+        
+        # Setup files table
+        files_table = self.query_one("#files-table", DataTable)
+        files_table.add_columns("Name", "Size", "Done", "Pri")
+        
+        # Setup trackers table
+        trackers_table = self.query_one("#trackers-table", DataTable)
+        trackers_table.add_columns("Host", "Status", "Peers", "S", "L")
+
+        # Initialize sparklines
+        self.query_one("Sparkline.-download", Sparkline).data = self._speed_down_hist
+        self.query_one("Sparkline.-upload", Sparkline).data = self._speed_up_hist
+        
         self._set_refresh_interval(self.refresh_interval)
         await self.refresh_all()
+
+    # -------------------------------------------------------------------------
+    # Status Bar
+    # -------------------------------------------------------------------------
+
+    def _update_status_bar(self) -> None:
+        """Update the status bar with current state info."""
+        parts = []
+        
+        # Connection status
+        if self.connection_ok:
+            parts.append("[green]●[/] Connected")
+        else:
+            parts.append("[red]○[/] Disconnected")
+        
+        # Torrent counts
+        parts.append(f"[cyan]{self.active_count}[/]↓ [dim]{self.paused_count}[/]⏸")
+        
+        # Filter indicator
+        if self.filter_text:
+            parts.append(f"[yellow]Filter:[/] {self.filter_text[:10]}")
+        if self.status_filter_value != "any":
+            parts.append(f"[magenta]{self.status_filter_value}[/]")
+        
+        # Refresh rate
+        parts.append(f"[dim]{self.refresh_interval:.1f}s[/]")
+        
+        status_bar = self.query_one("#status-bar", Static)
+        status_bar.update(" │ ".join(parts))
+
+    # -------------------------------------------------------------------------
+    # Data Refresh
+    # -------------------------------------------------------------------------
 
     def _set_refresh_interval(self, value: float) -> None:
         if self._refresh_timer:
@@ -357,310 +495,264 @@ class TorshApp(App):
     async def refresh_all(self) -> None:
         if not await self._check_connection():
             return
-        await asyncio.gather(self.refresh_torrents(), self.refresh_stats())
+        await asyncio.gather(
+            self._refresh_torrents(),
+            self._refresh_stats(),
+        )
+        self._update_status_bar()
 
     async def _check_connection(self) -> bool:
         try:
             await self.controller.ensure_connected()
-            if self.connection_issue:
-                self._log("[green]Connection restored[/]")
-            self.connection_issue = None
+            self.connection_ok = True
             return True
-        except TransmissionError as exc:
-            self.connection_issue = f"No Transmission RPC connection: {exc}"
-        except Exception as exc:  # noqa: BLE001
-            self.connection_issue = f"Connection error: {exc}"
+        except TransmissionError:
+            self.connection_ok = False
+        except Exception:
+            self.connection_ok = False
             if self.config.daemon.restart_on_fail and self.config.daemon.autostart:
                 maybe_start_daemon(self.config)
                 await asyncio.sleep(1.5)
                 try:
                     await self.controller.ensure_connected()
-                    self.connection_issue = None
-                    self._log("[yellow]Daemon restarted, connection restored[/]")
+                    self.connection_ok = True
+                    self.notify("🔄 Daemon restarted", severity="warning")
                     return True
                 except Exception:
                     pass
-        self._render_stats()
-        self._log(f"[red]{self.connection_issue}[/]")
+        self._update_status_bar()
         return False
 
-    async def refresh_torrents(self) -> None:
+    async def _refresh_torrents(self) -> None:
         try:
+            old_torrents = {t.id: t for t in self.torrents}
             self.torrents = await self.controller.list_torrents()
+            
+            # Check for newly completed downloads
+            for t in self.torrents:
+                if t.percent_done >= 100.0 and t.id not in self._completed_ids:
+                    if t.id in old_torrents and old_torrents[t.id].percent_done < 100.0:
+                        self.notify(f"✅ Completed: {t.name[:30]}", severity="information")
+                    self._completed_ids.add(t.id)
+            
             self._apply_filter()
             self._render_table()
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"[red]Refresh error: {exc}[/]")
+        except Exception as exc:
+            LOG.error(f"Refresh error: {exc}")
 
-    async def refresh_stats(self) -> None:
+    async def _refresh_stats(self) -> None:
         try:
             stats = await self.controller.session_stats()
-            dl_kib = stats.download_speed / 1024
-            ul_kib = stats.upload_speed / 1024
-            self.download_speed = f"{dl_kib:.1f} KiB/s"
-            self.upload_speed = f"{ul_kib:.1f} KiB/s"
-            self._append_speed(dl_kib, ul_kib)
-            self.active_count = stats.active_torrent_count
-            self.paused_count = stats.paused_torrent_count
+            self.download_speed = getattr(stats, "download_speed", 0) / 1024
+            self.upload_speed = getattr(stats, "upload_speed", 0) / 1024
+            self._append_speed(self.download_speed, self.upload_speed)
+            self.active_count = getattr(stats, "active_torrent_count", 0)
+            self.paused_count = getattr(stats, "paused_torrent_count", 0)
             self._update_disk()
-            self._render_stats()
-            self._render_graphs()
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"[red]Stats error: {exc}[/]")
+            self._render_disk_bar()
+        except Exception as exc:
+            LOG.error(f"Stats error: {exc}")
+
+    # -------------------------------------------------------------------------
+    # Rendering
+    # -------------------------------------------------------------------------
 
     def _render_table(self) -> None:
         table = self.query_one("#table", DataTable)
         table.clear()
+        
         data = self._sorted(self.filtered or self.torrents)
+        
         for t in data:
+            progress_bar = ProgressBar(total=100.0, completed=t.percent_done, width=10)
             table.add_row(
-                str(t.id),
-                t.name,
-                _fmt_percent(t.percent_done),
-                t.eta,
-                t.rate_down,
-                t.rate_up,
-                f"{t.ratio:.2f}",
-                _status_label(t.status),
+                Text(str(t.id), justify="right"),
+                Text(t.name, overflow="ellipsis", no_wrap=True),
+                progress_bar,
+                Text(t.eta, justify="right"),
+                Text(t.rate_down, style="green" if t.rate_down != "0 B/s" else "dim", justify="right"),
+                Text(t.rate_up, style="blue" if t.rate_up != "0 B/s" else "dim", justify="right"),
+                styled_ratio(t.ratio),
+                styled_status(t.status),
                 key=str(t.id),
             )
-        # Restore selection
+        
         if self.selected_id is not None:
-            try:
-                table.cursor_coordinate = (self._row_index(self.selected_id), 0)
-            except Exception:
+            idx = self._find_row_index(self.selected_id, data)
+            if idx is not None:
+                table.cursor_coordinate = (idx, 0)
+            else:
                 self.selected_id = None
+        
         if self.selected_id is None and data:
             self.selected_id = data[0].id
             table.cursor_coordinate = (0, 0)
+        
         self._render_details()
 
-    def _row_index(self, torrent_id: int) -> int:
-        data = self._sorted(self.filtered or self.torrents)
+    def _find_row_index(self, torrent_id: int, data: list[TorrentView]) -> int | None:
         for idx, t in enumerate(data):
             if t.id == torrent_id:
                 return idx
-        return 0
+        return None
 
     def _render_details(self) -> None:
-        details = self.query_one("#details", Markdown)
+        details = self.query_one("#details-view", Markdown)
         data = self._sorted(self.filtered or self.torrents)
         torrent = next((t for t in data if t.id == self.selected_id), None)
-        if not torrent:
-            details.update("_Nothing selected_")
-            return
-        md = f"""
-**{torrent.name}**
+        
+        if torrent:
+            md = f"""
+## {torrent.name}
 
-- Status: `{_status_label(torrent.status)}`
-- Done: `{_fmt_percent(torrent.percent_done)}`
-- ETA: `{torrent.eta}`
-- Speed: `↓ {torrent.rate_down}` / `↑ {torrent.rate_up}`
-- Size: `{torrent.size}`, Ratio: `{torrent.ratio:.2f}`
-- Peers: `{torrent.peers}` (S:{torrent.seeders}/L:{torrent.leechers})
-- Path: `{torrent.download_dir}`
+| Property | Value |
+|----------|-------|
+| Status | {styled_status(torrent.status).plain} |
+| Progress | {torrent.percent_done:.1f}% |
+| Size | {torrent.size} |
+| Ratio | {torrent.ratio:.2f} |
+| ETA | {torrent.eta} |
+| Peers | {torrent.peers} (S:{torrent.seeders}/L:{torrent.leechers}) |
+| Path | `{torrent.download_dir}` |
 """
-        details.update(md)
-
-    def _render_stats(self) -> None:
-        stats = self.query_one("#stats", Static)
-        if self.connection_issue:
-            stats.update(f"[red]{self.connection_issue}[/]")
+            details.update(md)
+            asyncio.create_task(self._update_files_tab(torrent.id))
+            asyncio.create_task(self._update_trackers_tab(torrent.id))
         else:
-            stats.update(
-                f"[b]↓ {self.download_speed}[/] {self._spark(self._speed_down_hist)} | [b]↑ {self.upload_speed}[/] {self._spark(self._speed_up_hist)} · Active: {self.active_count} · Paused: {self.paused_count} · Refresh {self.refresh_interval:.1f}s · Sort {self._sort_label()} · Status {self.status_filter_value} · Progress {self.progress_filter_value} · Disk {self.disk_free}/{self.disk_total}"
+            details.update("_Select a torrent to view details_")
+            self.query_one("#files-table", DataTable).clear()
+            self.query_one("#trackers-table", DataTable).clear()
+
+    async def _update_files_tab(self, torrent_id: int) -> None:
+        tabbed = self.query_one(TabbedContent)
+        if tabbed.active != "files":
+            return
+        
+        try:
+            files = await self.controller.get_files(torrent_id)
+            if not files:
+                return
+            
+            ft = self.query_one("#files-table", DataTable)
+            if ft.row_count != len(files):
+                ft.clear()
+            
+            if ft.row_count == 0:
+                for idx, f in files.items():
+                    size = humanize.naturalsize(f.get("length", 0), binary=True)
+                    completed = f.get("bytesCompleted", 0)
+                    length = f.get("length", 1)
+                    percent = (completed / length) * 100 if length > 0 else 0
+                    pri = f.get("priority", 0)
+                    pri_icon = "⬆" if pri > 0 else ("⬇" if pri < 0 else "―")
+                    ft.add_row(
+                        Text(f.get("name", "Unknown"), overflow="ellipsis"),
+                        Text(size, justify="right"),
+                        Text(format_percent(percent), justify="right"),
+                        Text(pri_icon, justify="center"),
+                    )
+        except Exception:
+            pass
+
+    async def _update_trackers_tab(self, torrent_id: int) -> None:
+        """Update the trackers table for the selected torrent."""
+        tabbed = self.query_one(TabbedContent)
+        if tabbed.active != "trackers":
+            return
+        
+        try:
+            trackers = await self.controller.get_trackers(torrent_id)
+            tt = self.query_one("#trackers-table", DataTable)
+            tt.clear()
+            
+            for t in trackers:
+                host = t.get("host", "unknown")
+                if len(host) > 30:
+                    host = host[:27] + "..."
+                status = t.get("status", "")
+                if len(status) > 15:
+                    status = status[:12] + "..."
+                
+                # Color status
+                if "success" in status.lower() or status == "":
+                    status_text = Text(status or "OK", style="green")
+                elif "error" in status.lower():
+                    status_text = Text(status, style="red")
+                else:
+                    status_text = Text(status, style="yellow")
+                
+                tt.add_row(
+                    Text(host),
+                    status_text,
+                    Text(str(t.get("peers", 0)), justify="right"),
+                    Text(str(t.get("seeders", 0)), justify="right"),
+                    Text(str(t.get("leechers", 0)), justify="right"),
+                )
+        except Exception:
+            pass
+
+    def _render_disk_bar(self) -> None:
+        disk_bar = self.query_one("#disk-bar", Static)
+        if self.disk_total > 0:
+            used = self.disk_total - self.disk_free
+            bar = ProgressBar(
+                total=float(self.disk_total),
+                completed=float(used),
+                width=15,
+                complete_style="blue",
+                finished_style="blue",
             )
+            disk_bar.update(bar)
 
-    def _render_graphs(self) -> None:
-        graphs = self.query_one("#graphs", Markdown)
-        md = f"""
-**Speeds**
-- Down: `{self.download_speed}` {self._spark(self._speed_down_hist)}
-- Up: `{self.upload_speed}` {self._spark(self._speed_up_hist)}
+    def _append_speed(self, down: float, up: float) -> None:
+        self._speed_down_hist.append(down)
+        self._speed_up_hist.append(up)
+        if len(self._speed_down_hist) > 60:
+            self._speed_down_hist.pop(0)
+            self._speed_up_hist.pop(0)
+        self.query_one("Sparkline.-download", Sparkline).data = self._speed_down_hist
+        self.query_one("Sparkline.-upload", Sparkline).data = self._speed_up_hist
 
-**Disk**
-- Free: `{self.disk_free}` / Total: `{self.disk_total}`
-"""
-        graphs.update(md)
-
-    def _log(self, message: str) -> None:
-        log = self.query_one("#log", RichLog)
-        log.write(message)
-
-    async def action_refresh(self) -> None:
-        await self.refresh_all()
-
-    async def action_add(self) -> None:
-        if not await self._check_connection():
-            return
-        result = await self.push_screen_wait(AddTorrentScreen(str(self.config.paths.download_dir)))
-        if not result:
-            return
-        link, directory = result
+    def _update_disk(self) -> None:
         try:
-            await self.controller.add(link, directory)
-            self._log(f"[green]Added:[/] {link}")
-            await self.refresh_all()
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"[red]Add failed: {exc}[/]")
+            usage = shutil.disk_usage(self.config.paths.download_dir)
+            self.disk_free = usage.free
+            self.disk_total = usage.total
+        except Exception:
+            self.disk_free = 0
+            self.disk_total = 1
 
-    async def action_toggle(self) -> None:
-        if not await self._check_connection():
-            return
-        torrent = self._current()
-        if not torrent:
-            return
-        try:
-            if torrent.status in {"downloading", "seeding", "checking"}:
-                await self.controller.stop([torrent.id])
-                self._log(f"[yellow]Paused:[/] {torrent.name}")
-            else:
-                await self.controller.start([torrent.id])
-                self._log(f"[green]Started:[/] {torrent.name}")
-            await self.refresh_all()
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"[red]State change failed: {exc}[/]")
-
-    async def action_delete(self) -> None:
-        if not await self._check_connection():
-            return
-        torrent = self._current()
-        if not torrent:
-            return
-        confirm = await self.push_screen_wait(ConfirmScreen(f"Delete {torrent.name} (data too)?"))
-        if confirm is None:
-            return
-        try:
-            await self.controller.remove([torrent.id], delete_data=confirm)
-            self._log(f"[red]Deleted:[/] {torrent.name} (data: {'yes' if confirm else 'no'})")
-            await self.refresh_all()
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"[red]Delete failed: {exc}[/]")
-
-    async def action_move(self) -> None:
-        if not await self._check_connection():
-            return
-        torrent = self._current()
-        if not torrent:
-            return
-        new_dir = await self.push_screen_wait(MoveScreen(torrent.download_dir))
-        if not new_dir:
-            return
-        try:
-            Path(new_dir).expanduser().mkdir(parents=True, exist_ok=True)
-            await self.controller.move([torrent.id], location=new_dir, move_data=True)
-            self._log(f"[cyan]Moved to:[/] {new_dir}")
-            await self.refresh_all()
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"[red]Move failed: {exc}[/]")
-
-    async def action_speed(self) -> None:
-        if not await self._check_connection():
-            return
-        limits = await self.controller.get_speed_limits()
-        result = await self.push_screen_wait(SpeedScreen(limits["down"], limits["up"]))
-        if not result:
-            return
-        down, up = result
-        try:
-            await self.controller.set_speed_limits(down, up)
-            self._log(f"[cyan]Global limits:[/] ↓ {down} KiB/s, ↑ {up} KiB/s")
-            await self.refresh_stats()
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"[red]Speed limit error: {exc}[/]")
-
-    async def action_priority(self) -> None:
-        if not await self._check_connection():
-            return
-        torrent = self._current()
-        if not torrent:
-            return
-        files = await self.controller.get_files(torrent.id)
-        if not files:
-            self._log("[yellow]No files to reprioritize[/]")
-            return
-        result = await self.push_screen_wait(PriorityScreen(files))
-        if not result:
-            return
-        high, normal, low = result
-        try:
-            await self.controller.set_priority(torrent.id, high, normal, low)
-            self._log(f"[cyan]Priorities updated[/]")
-            await self.refresh_all()
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"[red]Priority error: {exc}[/]")
-
-    async def action_log(self) -> None:
-        await self.push_screen(LogScreen(self.config.daemon.log_path))
-
-    async def action_torrent_speed(self) -> None:
-        if not await self._check_connection():
-            return
-        torrent = self._current()
-        if not torrent:
-            return
-        limits = await self.controller.get_torrent_speed(torrent.id)
-        result = await self.push_screen_wait(SpeedScreen(limits["down"], limits["up"]))
-        if not result:
-            return
-        down, up = result
-        try:
-            await self.controller.set_torrent_speed(torrent.id, down, up)
-            self._log(f"[cyan]Torrent limit:[/] ↓ {down} KiB/s, ↑ {up} KiB/s")
-            await self.refresh_all()
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"[red]Torrent limit error: {exc}[/]")
-
-    async def action_filter(self) -> None:
-        result = await self.push_screen_wait(FilterScreen(self.filter_text))
-        if result is None:
-            return
-        self.filter_text = result
-        self._apply_filter()
-        self._render_table()
-        self._persist_ui()
-
-    async def action_faster(self) -> None:
-        self._set_refresh_interval(self.refresh_interval - 0.5)
-        self._render_stats()
-        self._log(f"[cyan]Refresh {self.refresh_interval:.1f}s[/]")
-        self._persist_ui()
-
-    async def action_slower(self) -> None:
-        self._set_refresh_interval(self.refresh_interval + 0.5)
-        self._render_stats()
-        self._log(f"[cyan]Refresh {self.refresh_interval:.1f}s[/]")
-        self._persist_ui()
-
-    async def action_help(self) -> None:
-        await self.push_screen(HelpScreen())
+    # -------------------------------------------------------------------------
+    # Filtering & Sorting
+    # -------------------------------------------------------------------------
 
     def _apply_filter(self) -> None:
-        if not self.filter_text:
-            ft_pred = lambda _: True
-        else:
-            ft = self.filter_text.lower()
-            ft_pred = lambda t: ft in t.name.lower()
-
-        def status_pred(t: TorrentView) -> bool:
+        text = self.filter_text.lower()
+        self.filtered = []
+        
+        for t in self.torrents:
+            if text and text not in t.name.lower():
+                continue
             if self.status_filter_value == "active":
-                return t.status in {"downloading", "seeding", "checking"}
-            if self.status_filter_value == "paused":
-                return t.status in {"stopped", "paused"}
-            if self.status_filter_value == "error":
-                return "error" in t.status.lower()
-            return True
-
-        def progress_pred(t: TorrentView) -> bool:
+                if t.status not in ("downloading", "seeding", "checking"):
+                    continue
+            elif self.status_filter_value == "paused":
+                if t.status not in ("stopped", "paused"):
+                    continue
+            elif self.status_filter_value == "error":
+                if "error" not in t.status.lower():
+                    continue
             if self.progress_filter_value == "done":
-                return t.percent_done >= 99.9
-            if self.progress_filter_value == "under50":
-                return t.percent_done < 50.0
-            return True
-
-        self.filtered = [t for t in self.torrents if ft_pred(t) and status_pred(t) and progress_pred(t)]
-        if self.selected_id is not None and all(t.id != self.selected_id for t in self.filtered):
-            self.selected_id = self.filtered[0].id if self.filtered else None
+                if t.percent_done < 99.9:
+                    continue
+            elif self.progress_filter_value == "under50":
+                if t.percent_done >= 50.0:
+                    continue
+            self.filtered.append(t)
+        
+        if self.selected_id is not None:
+            if all(t.id != self.selected_id for t in self.filtered):
+                self.selected_id = self.filtered[0].id if self.filtered else None
 
     def _sorted(self, data: list[TorrentView]) -> list[TorrentView]:
         if self.sort_column is None:
@@ -678,30 +770,6 @@ class TorshApp(App):
         key = key_funcs.get(self.sort_column, lambda t: t.id)
         return sorted(data, key=key, reverse=self.sort_desc)
 
-    async def action_sort1(self) -> None:
-        self._set_sort(1)
-
-    async def action_sort2(self) -> None:
-        self._set_sort(2)
-
-    async def action_sort3(self) -> None:
-        self._set_sort(3)
-
-    async def action_sort4(self) -> None:
-        self._set_sort(4)
-
-    async def action_sort5(self) -> None:
-        self._set_sort(5)
-
-    async def action_sort6(self) -> None:
-        self._set_sort(6)
-
-    async def action_sort7(self) -> None:
-        self._set_sort(7)
-
-    async def action_sort8(self) -> None:
-        self._set_sort(8)
-
     def _set_sort(self, col: int) -> None:
         if self.sort_column == col:
             self.sort_desc = not self.sort_desc
@@ -709,26 +777,229 @@ class TorshApp(App):
             self.sort_column = col
             self.sort_desc = False
         self._render_table()
-        self._persist_ui()
 
-    def _sort_label(self) -> str:
-        if self.sort_column is None:
-            return "none"
-        names = {
-            1: "ID",
-            2: "Name",
-            3: "%",
-            4: "ETA",
-            5: "↓",
-            6: "↑",
-            7: "Ratio",
-            8: "Status",
-        }
-        direction = "desc" if self.sort_desc else "asc"
-        return f"{names.get(self.sort_column,'')} {direction}"
+    # -------------------------------------------------------------------------
+    # Actions
+    # -------------------------------------------------------------------------
+
+    def action_cursor_down(self) -> None:
+        self.query_one("#table", DataTable).action_cursor_down()
+
+    def action_cursor_up(self) -> None:
+        self.query_one("#table", DataTable).action_cursor_up()
+
+    def action_cursor_bottom(self) -> None:
+        self.query_one("#table", DataTable).action_scroll_end()
+
+    async def action_refresh(self) -> None:
+        await self.refresh_all()
+
+    async def action_add(self) -> None:
+        if not await self._check_connection():
+            return
+        result = await self._show_modal(AddTorrentScreen(str(self.config.paths.download_dir)))
+        if not result:
+            return
+        link, subdir = result
+        link_path = Path(link).expanduser()
+        if link_path.exists():
+            link = str(link_path)
+        subdir = str(Path(subdir).expanduser())
+        try:
+            await self.controller.add(link, subdir)
+            self.notify(f"➕ Added torrent", severity="information")
+            await self.refresh_all()
+        except Exception as e:
+            self.notify(f"❌ Failed: {e}", severity="error")
+
+    async def action_toggle(self) -> None:
+        if not await self._check_connection():
+            return
+        torrent = self._current()
+        if not torrent:
+            return
+        try:
+            if torrent.status in {"downloading", "seeding", "checking"}:
+                await self.controller.stop([torrent.id])
+                self.notify(f"⏸ Paused: {torrent.name[:20]}", severity="information")
+            else:
+                await self.controller.start([torrent.id])
+                self.notify(f"▶ Started: {torrent.name[:20]}", severity="information")
+            await self.refresh_all()
+        except Exception as e:
+            self.notify(f"❌ Error: {e}", severity="error")
+
+    async def action_delete(self) -> None:
+        if not await self._check_connection():
+            return
+        torrent = self._current()
+        if not torrent:
+            return
+        confirm = await self._show_modal(ConfirmScreen(f"Delete '{torrent.name}'?\n(Data will also be removed)"))
+        if confirm:
+            try:
+                await self.controller.remove([torrent.id], delete_data=True)
+                self._completed_ids.discard(torrent.id)
+                self.notify(f"🗑 Deleted: {torrent.name[:20]}", severity="warning")
+                await self.refresh_all()
+            except Exception as e:
+                self.notify(f"❌ Error: {e}", severity="error")
+
+    async def action_move(self) -> None:
+        if not await self._check_connection():
+            return
+        torrent = self._current()
+        if not torrent:
+            return
+        new_dir = await self._show_modal(MoveScreen(torrent.download_dir))
+        if new_dir:
+            try:
+                await self.controller.move([torrent.id], new_dir, True)
+                self.notify(f"📦 Moved to: {new_dir}", severity="information")
+                await self.refresh_all()
+            except Exception as e:
+                self.notify(f"❌ Error: {e}", severity="error")
+
+    async def action_speed(self) -> None:
+        if not await self._check_connection():
+            return
+        limits = await self.controller.get_speed_limits()
+        result = await self._show_modal(SpeedScreen(limits["down"], limits["up"]))
+        if result:
+            down, up = result
+            await self.controller.set_speed_limits(down, up)
+            self.notify(f"⚡ Speed: ↓{down} ↑{up} KiB/s", severity="information")
+
+    async def action_torrent_speed(self) -> None:
+        if not await self._check_connection():
+            return
+        torrent = self._current()
+        if not torrent:
+            return
+        limits = await self.controller.get_torrent_speed(torrent.id)
+        result = await self._show_modal(SpeedScreen(limits["down"], limits["up"]))
+        if result:
+            down, up = result
+            await self.controller.set_torrent_speed(torrent.id, down, up)
+            self.notify(f"⚡ Torrent speed set", severity="information")
+
+    async def action_priority(self) -> None:
+        if not await self._check_connection():
+            return
+        torrent = self._current()
+        if not torrent:
+            return
+        files = await self.controller.get_files(torrent.id)
+        if not files:
+            return
+        result = await self._show_modal(PriorityScreen(files))
+        if result:
+            high, normal, low = result
+            await self.controller.set_priority(torrent.id, high, normal, low)
+            self.notify("📋 Priorities updated", severity="information")
+
+    async def action_filter(self) -> None:
+        result = await self._show_modal(FilterScreen(self.filter_text))
+        if result is not None:
+            self.filter_text = result
+            self._apply_filter()
+            self._render_table()
+            self._persist_ui()
+            self._update_status_bar()
+
+    async def action_status_filter(self) -> None:
+        order = ["any", "active", "paused", "error"]
+        idx = order.index(self.status_filter_value)
+        self.status_filter_value = order[(idx + 1) % len(order)]
+        self._apply_filter()
+        self._render_table()
+        self._persist_ui()
+        self._update_status_bar()
+        self.notify(f"Filter: {self.status_filter_value}", severity="information")
+
+    async def action_progress_filter(self) -> None:
+        order = ["any", "done", "under50"]
+        idx = order.index(self.progress_filter_value)
+        self.progress_filter_value = order[(idx + 1) % len(order)]
+        self._apply_filter()
+        self._render_table()
+        self._persist_ui()
+        self._update_status_bar()
+        self.notify(f"Progress: {self.progress_filter_value}", severity="information")
+
+    async def action_help(self) -> None:
+        await self.push_screen(HelpScreen())
+
+    def action_faster(self) -> None:
+        self._set_refresh_interval(self.refresh_interval - 0.5)
+        self.notify(f"Refresh: {self.refresh_interval:.1f}s", severity="information")
+
+    def action_slower(self) -> None:
+        self._set_refresh_interval(self.refresh_interval + 0.5)
+        self.notify(f"Refresh: {self.refresh_interval:.1f}s", severity="information")
+
+    def action_sort_1(self) -> None: self._set_sort(1)
+    def action_sort_2(self) -> None: self._set_sort(2)
+    def action_sort_3(self) -> None: self._set_sort(3)
+    def action_sort_4(self) -> None: self._set_sort(4)
+    def action_sort_5(self) -> None: self._set_sort(5)
+    def action_sort_6(self) -> None: self._set_sort(6)
+    def action_sort_7(self) -> None: self._set_sort(7)
+    def action_sort_8(self) -> None: self._set_sort(8)
+
+    # -------------------------------------------------------------------------
+    # Event Handlers
+    # -------------------------------------------------------------------------
+
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        if event.control.id == "table":
+            col_map = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8}
+            if event.column_index in col_map:
+                self._set_sort(col_map[event.column_index])
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.control.id == "table" and event.row_key:
+            try:
+                self.selected_id = int(event.row_key.value)
+                self._render_details()
+            except (ValueError, AttributeError):
+                pass
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        """Refresh tab content when switching tabs."""
+        if self.selected_id:
+            if event.tab.id == "files-tab":
+                asyncio.create_task(self._update_files_tab(self.selected_id))
+            elif event.tab.id == "trackers-tab":
+                asyncio.create_task(self._update_trackers_tab(self.selected_id))
+
+    # -------------------------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------------------------
+
+    def _current(self) -> TorrentView | None:
+        if self.selected_id is None:
+            return None
+        return next((t for t in self.torrents if t.id == self.selected_id), None)
+
+    async def _show_modal(self, screen: ModalScreen[T]) -> T | None:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[T | None] = loop.create_future()
+        original_dismiss = screen.dismiss
+
+        def wrapped_dismiss(result: T | None = None) -> None:
+            if not future.done():
+                future.set_result(result)
+            original_dismiss(result)
+
+        screen.dismiss = wrapped_dismiss  # type: ignore
+        try:
+            await self.push_screen(screen)
+            return await future
+        except Exception:
+            return None
 
     def _persist_ui(self) -> None:
-        # Update config UI state and save (best-effort)
         self.config.ui.refresh_interval = self.refresh_interval
         self.config.ui.sort_column = self.sort_column
         self.config.ui.sort_desc = self.sort_desc
@@ -737,76 +1008,5 @@ class TorshApp(App):
         self.config.ui.progress_filter = self.progress_filter_value
         try:
             save_config(self.config)
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"[yellow]Config save failed: {exc}[/]")
-
-    async def action_status_filter(self) -> None:
-        order = ["any", "active", "paused", "error"]
-        idx = order.index(self.status_filter_value)
-        self.status_filter_value = order[(idx + 1) % len(order)]
-        self._log(f"[cyan]Status filter:[/] {self.status_filter_value}")
-        self._apply_filter()
-        self._render_table()
-        self._persist_ui()
-
-    async def action_progress_filter(self) -> None:
-        order = ["any", "done", "under50"]
-        idx = order.index(self.progress_filter_value)
-        self.progress_filter_value = order[(idx + 1) % len(order)]
-        self._log(f"[cyan]Progress filter:[/] {self.progress_filter_value}")
-        self._apply_filter()
-        self._render_table()
-        self._persist_ui()
-
-    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
-        # Map visible column index to sort key (1-based as in bindings)
-        self._set_sort(event.column_index + 1)
-
-    def _append_speed(self, down_kib: float, up_kib: float) -> None:
-        def push(buf: list[float], val: float):
-            buf.append(val)
-            if len(buf) > 40:
-                buf.pop(0)
-
-        push(self._speed_down_hist, down_kib)
-        push(self._speed_up_hist, up_kib)
-
-    def _spark(self, buf: list[float]) -> str:
-        if not buf:
-            return ""
-        blocks = "▁▂▃▄▅▆▇█"
-        mn, mx = min(buf), max(buf)
-        if mx == mn:
-            return blocks[0] * min(len(buf), 12)
-        scaled = []
-        for v in buf[-12:]:
-            idx = int((v - mn) / (mx - mn) * (len(blocks) - 1))
-            scaled.append(blocks[idx])
-        return "".join(scaled)
-
-    def _update_disk(self) -> None:
-        try:
-            usage = shutil.disk_usage(self.config.paths.download_dir)
-            self.disk_free = humanize.naturalsize(usage.free, binary=True)
-            self.disk_total = humanize.naturalsize(usage.total, binary=True)
         except Exception:
-            self.disk_free = "n/a"
-            self.disk_total = "n/a"
-
-    def _current(self) -> TorrentView | None:
-        if self.selected_id is None:
-            return None
-        return next((t for t in self.torrents if t.id == self.selected_id), None)
-
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        try:
-            self.selected_id = int(event.row_key)
-        except Exception:
-            self.selected_id = None
-        self._render_details()
-
-    def on_resize(self, event: events.Resize) -> None:
-        # Refresh details on resize so markdown wraps correctly
-        self._render_details()
-
-
+            pass

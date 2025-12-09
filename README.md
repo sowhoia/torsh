@@ -1,38 +1,79 @@
-# torsh — Transmission TUI
+# 🌊 Torsh — Transmission TUI
 
-One-command Transmission client (btop-style). Runs `torsh`; it will start Transmission (and can auto-install it) or connect to an existing RPC.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![PyPI](https://img.shields.io/pypi/v/torsh.svg)](https://pypi.org/project/torsh/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-## Install
-- pipx (recommended): `pipx install torsh`
-- pip: `python3 -m pip install torsh`
+A beautiful, modern TUI client for Transmission. One command, full control.
 
-Needs Python 3.10+. If `transmission-daemon` is missing, torsh will try to install it via the available package manager (can be disabled).
+## ✨ Features
 
-## Run
+- 📊 **Dashboard View** — Sparklines, disk usage, real-time stats
+- 🎯 **Smart Filters** — By name, status, or progress
+- 📁 **File Browser** — View and prioritize individual files
+- 🔗 **Tracker Info** — Monitor tracker status and peer counts
+- 🔔 **Notifications** — Toast alerts when downloads complete
+- ⌨️ **Vim Keys** — `j`/`k` navigation, power-user friendly
+- 💾 **Session Persistence** — Remembers your filters and sort order
+- 🚀 **Auto-Start** — Launches daemon automatically if needed
+
+## 📦 Install
+
 ```bash
-torsh
-# optional:
-# torsh --host localhost --port 9091 --download-dir ~/Downloads/torrents --no-autostart --no-install-missing
+# Recommended (isolated environment)
+pipx install torsh
+
+# Or with pip
+pip install torsh
 ```
 
-## Keys
-- `a` add magnet/.torrent (choose download dir)
-- `space` pause/resume
-- `d` delete (ask about data)
-- `g` change download dir
-- `s` set speed limits
-- `p` set file priorities
-- `l` view daemon log (auto-refresh tail)
-- `/` filter by name, `]`/`[` adjust refresh rate, `r` manual refresh
-- `?` help, `q` quit
-- UI remembers filters/sort/refresh interval between sessions.
+Requires Python 3.10+. If `transmission-daemon` is missing, torsh can install it automatically.
 
-## Config
-Auto-created at `~/.config/torsh/config.yaml`. Env/flags override:
-`TORSH_HOST`, `TORSH_PORT`, `TORSH_USER`, `TORSH_PASSWORD`, `TORSH_TIMEOUT`,
-`TORSH_DOWNLOAD_DIR`, `TORSH_INSTALL_MISSING`, `TORSH_RESTART_ON_FAIL`, `TORSH_LOG`.
+## 🚀 Usage
 
-Packaging notes: see `PACKAGING.md` (sdist/wheel, deb/rpm via fpm, brew formula template).
+```bash
+torsh
+```
 
-## License
-MIT.
+That's it! Torsh will start the daemon if needed and connect automatically.
+
+### Options
+
+```bash
+torsh --host localhost --port 9091
+torsh --download-dir ~/Downloads/torrents
+torsh --no-autostart  # Don't start daemon automatically
+```
+
+## ⌨️ Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `a` | Add magnet/torrent file |
+| `d` | Delete torrent (with data) |
+| `Space` | Pause/Resume |
+| `s` | Set global speed limits |
+| `p` | Set file priorities |
+| `/` | Filter by name |
+| `c` | Cycle status filter |
+| `g` | Move download location |
+| `?` | Show help |
+| `q` | Quit |
+
+**Navigation:** `j`/`k` scroll, `G` bottom, `Tab` switch panes
+
+**Sorting:** Click headers or press `1`-`8`
+
+## ⚙️ Configuration
+
+Config is auto-created at `~/.config/torsh/config.yaml`.
+
+Environment variables:
+- `TORSH_HOST`, `TORSH_PORT` — RPC connection
+- `TORSH_USER`, `TORSH_PASSWORD` — Authentication
+- `TORSH_DOWNLOAD_DIR` — Default download directory
+- `TORSH_LOG` — Log level (DEBUG, INFO, etc.)
+
+## 📝 License
+
+MIT © 2024

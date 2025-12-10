@@ -103,10 +103,12 @@ class TransmissionController:
             "add_torrent",
             link,
             download_dir=download_dir or str(self.config.paths.download_dir),
+            paused=False,  # сразу стартуем как в Transmission по умолчанию
         )
 
     async def start(self, ids: Iterable[int]):
-        return await self._rpc("start_torrent", ids)
+        # bypass_queue=True чтобы форсировать старт, как в Transmission "Resume Now"
+        return await self._rpc("start_torrent", ids, bypass_queue=True)
 
     async def stop(self, ids: Iterable[int]):
         return await self._rpc("stop_torrent", ids)
@@ -211,7 +213,14 @@ class TransmissionController:
         raw_percent = getattr(t, "percentDone", None)
         if raw_percent is None:
             raw_percent = getattr(t, "progress", 0) or 0
-        percent_done = float(raw_percent * 100.0) if raw_percent <= 1.0 else float(raw_percent)
+        # Если есть точные размеры, пересчитаем процент сами для достоверности
+        size_when_done = getattr(t, "sizeWhenDone", None) or getattr(t, "size_when_done", None)
+        left_until_done = getattr(t, "leftUntilDone", None) or getattr(t, "left_until_done", None)
+        if size_when_done and size_when_done > 0 and left_until_done is not None:
+            calc_percent = (size_when_done - left_until_done) / size_when_done * 100.0
+            percent_done = max(0.0, min(100.0, float(calc_percent)))
+        else:
+            percent_done = float(raw_percent * 100.0) if raw_percent <= 1.0 else float(raw_percent)
 
         rate_down = (
             getattr(t, "rate_download", None)

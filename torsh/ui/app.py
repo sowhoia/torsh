@@ -436,6 +436,8 @@ class TorshApp(App):
         self._last_refresh_error: bool = False
         self._auto_retry_attempts: dict[int, int] = {}
         self._verified_ids: set[int] = set()
+        self._user_paused: set[int] = set()
+        self._auto_started: set[int] = set()
         
         # Restore state
         self.refresh_interval = config.ui.refresh_interval
@@ -707,6 +709,25 @@ class TorshApp(App):
                 if t.id in self._auto_retry_attempts:
                     self._auto_retry_attempts.pop(t.id, None)
 
+    async def _auto_resume(self, torrents: list[TorrentView]) -> None:
+        """Auto-start paused/stopped torrents unless user paused them."""
+        to_start: list[int] = []
+        for t in torrents:
+            status = t.status.lower()
+            if t.percent_done >= 100.0:
+                continue
+            if status in {"stopped", "paused"} and t.id not in self._user_paused:
+                to_start.append(t.id)
+        if not to_start:
+            return
+        try:
+            await self.controller.start(to_start)
+            for tid in to_start:
+                self._auto_started.add(tid)
+            self.notify(f"▶ Автостарт {len(to_start)} торрентов", severity="information")
+        except Exception as exc:
+            LOG.debug(f"Auto-resume failed: {exc}")
+
     async def _refresh_torrents(self) -> None:
         try:
             old_torrents = {t.id: t for t in self.torrents}
@@ -722,6 +743,7 @@ class TorshApp(App):
             
             self._apply_filter()
             await self._auto_retry_failed(self.torrents)
+            await self._auto_resume(self.torrents)
             self._render_table()
             self._last_refresh_error = False
         except Exception as exc:
@@ -1229,9 +1251,11 @@ class TorshApp(App):
         try:
             if torrent.status in {"downloading", "seeding", "checking"}:
                 await self.controller.stop([torrent.id])
+                self._user_paused.add(torrent.id)
                 self.notify(f"⏸ Paused: {torrent.name[:20]}", severity="information")
             else:
                 await self.controller.start([torrent.id])
+                self._user_paused.discard(torrent.id)
                 self.notify(f"▶ Started: {torrent.name[:20]}", severity="information")
             await self.refresh_all()
         except Exception as e:
@@ -1248,6 +1272,8 @@ class TorshApp(App):
             try:
                 await self.controller.remove([torrent.id], delete_data=True)
                 self._completed_ids.discard(torrent.id)
+                self._user_paused.discard(torrent.id)
+                self._auto_started.discard(torrent.id)
                 self.notify(f"🗑 Deleted: {torrent.name[:20]}", severity="warning")
                 await self.refresh_all()
             except Exception as e:
@@ -1273,6 +1299,8 @@ class TorshApp(App):
             try:
                 await self.controller.remove([torrent.id], delete_data=False)
                 self._completed_ids.discard(torrent.id)
+                self._user_paused.discard(torrent.id)
+                self._auto_started.discard(torrent.id)
                 self.notify(f"🗑 Deleted (kept data): {torrent.name[:20]}", severity="warning")
                 await self.refresh_all()
             except Exception as e:

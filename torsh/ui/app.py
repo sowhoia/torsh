@@ -44,6 +44,7 @@ LOG = get_logger(__name__)
 T = TypeVar("T")
 
 
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -139,6 +140,13 @@ class AddTorrentScreen(BaseModalScreen[tuple[str, str] | None]):
 class ConfirmScreen(BaseModalScreen[bool]):
     """Modal for yes/no confirmation."""
 
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("y", "yes", "Yes"),
+        Binding("n", "no", "No"),
+        Binding("enter", "yes", "Yes"),
+    ]
+
     def __init__(self, message: str) -> None:
         super().__init__()
         self.message = message
@@ -150,6 +158,21 @@ class ConfirmScreen(BaseModalScreen[bool]):
             with Horizontal(classes="buttons"):
                 yield Button("Yes", id="yes", variant="primary")
                 yield Button("No", id="no")
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#yes", Button).focus()
+        except Exception:
+            pass
+
+    def action_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_no(self) -> None:
+        self.dismiss(False)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "yes")
@@ -349,10 +372,12 @@ class TorshApp(App):
         Binding("g", "move", "Move"),
         Binding("s", "speed", "Speed"),
         Binding("t", "torrent_speed", "T-Speed"),
+        Binding("v", "verify", "Verify"),
         Binding("p", "priority", "Priority"),
         Binding("/", "filter", "Filter"),
         Binding("c", "status_filter", "Status"),
         Binding("o", "progress_filter", "Progress"),
+        Binding("x", "delete_keep", "Del(K)"),
         Binding("]", "faster", show=False),
         Binding("[", "slower", show=False),
         Binding("j", "cursor_down", show=False),
@@ -397,6 +422,20 @@ class TorshApp(App):
         self._speed_down_hist: list[float] = [0.0] * 60
         self._speed_up_hist: list[float] = [0.0] * 60
         self._completed_ids: set[int] = set()  # Track completed torrents
+        self._row_cache: dict[int, dict[str, Any]] = {}
+        self._files_cache: dict[int, dict[str, Any]] = {}
+        self._trackers_cache: dict[str, dict[str, Any]] = {}
+        self._files_torrent_id: int | None = None
+        self._trackers_torrent_id: int | None = None
+        self._table_columns: dict[str, Any] = {}
+        self._files_columns: dict[str, Any] = {}
+        self._trackers_columns: dict[str, Any] = {}
+        self.global_speed_limit_down: int = 0
+        self.global_speed_limit_up: int = 0
+        self._connection_state: bool = True
+        self._last_refresh_error: bool = False
+        self._auto_retry_attempts: dict[int, int] = {}
+        self._verified_ids: set[int] = set()
         
         # Restore state
         self.refresh_interval = config.ui.refresh_interval
@@ -412,12 +451,16 @@ class TorshApp(App):
     def compose(self) -> ComposeResult:
         # Header with status bar
         with Container(id="app-header"):
-            yield Label("TORSH", classes="app-title")
-            yield Static("", id="status-bar")
+            with Container(id="title-stack"):
+                yield Label("TORSH", classes="app-title", id="title-art")
+                yield Static("", id="status-bar")
             with Horizontal(id="header-stats"):
                 with Horizontal(classes="stat-box"):
                     yield Label("Disk ", classes="stat-label")
                     yield Static("", id="disk-bar", markup=False)
+                with Horizontal(classes="stat-box"):
+                    yield Label("Limit ", classes="stat-label")
+                    yield Static("∞ / ∞", id="limit-badge")
                 with Horizontal(classes="stat-box"):
                     yield Label("↓ ", classes="stat-label")
                     yield Sparkline(self._speed_down_hist, summary_function=max, classes="-download")
@@ -437,21 +480,64 @@ class TorshApp(App):
                         yield DataTable(id="files-table", cursor_type="row")
                     with TabPane("Trackers", id="trackers"):
                         yield DataTable(id="trackers-table", cursor_type="row")
-
+        yield Static("", id="bindings-bar", markup=True)
         yield Footer()
 
     async def on_mount(self) -> None:
         # Setup main table
         table = self.query_one("#table", DataTable)
-        table.add_columns("ID", "Name", "Progress", "ETA", "↓", "↑", "Ratio", "Status")
+        cols = table.add_columns(
+            ("ID", "id"),
+            ("Name", "name"),
+            ("Progress", "progress"),
+            ("ETA", "eta"),
+            ("↓", "down"),
+            ("↑", "up"),
+            ("Ratio", "ratio"),
+            ("Status", "status"),
+        )
+        self._table_columns = {
+            "id": cols[0],
+            "name": cols[1],
+            "progress": cols[2],
+            "eta": cols[3],
+            "down": cols[4],
+            "up": cols[5],
+            "ratio": cols[6],
+            "status": cols[7],
+        }
         
         # Setup files table
         files_table = self.query_one("#files-table", DataTable)
-        files_table.add_columns("Name", "Size", "Done", "Pri")
+        file_cols = files_table.add_columns(
+            ("Name", "name"),
+            ("Size", "size"),
+            ("Done", "done"),
+            ("Pri", "priority"),
+        )
+        self._files_columns = {
+            "name": file_cols[0],
+            "size": file_cols[1],
+            "done": file_cols[2],
+            "priority": file_cols[3],
+        }
         
         # Setup trackers table
         trackers_table = self.query_one("#trackers-table", DataTable)
-        trackers_table.add_columns("Host", "Status", "Peers", "S", "L")
+        tracker_cols = trackers_table.add_columns(
+            ("Host", "host"),
+            ("Status", "status"),
+            ("Peers", "peers"),
+            ("S", "seeders"),
+            ("L", "leechers"),
+        )
+        self._trackers_columns = {
+            "host": tracker_cols[0],
+            "status": tracker_cols[1],
+            "peers": tracker_cols[2],
+            "seeders": tracker_cols[3],
+            "leechers": tracker_cols[4],
+        }
 
         # Initialize sparklines
         self.query_one("Sparkline.-download", Sparkline).data = self._speed_down_hist
@@ -459,6 +545,7 @@ class TorshApp(App):
         
         self._set_refresh_interval(self.refresh_interval)
         await self.refresh_all()
+        self._update_bindings_bar()
 
     # -------------------------------------------------------------------------
     # Status Bar
@@ -483,11 +570,54 @@ class TorshApp(App):
         if self.status_filter_value != "any":
             parts.append(f"[magenta]{self.status_filter_value}[/]")
         
+        # Speed limits indicator
+        limit_down = self._format_limit(self.global_speed_limit_down)
+        limit_up = self._format_limit(self.global_speed_limit_up)
+        parts.append(f"Limit ↓{limit_down}/↑{limit_up}")
+        
         # Refresh rate
         parts.append(f"[dim]{self.refresh_interval:.1f}s[/]")
         
         status_bar = self.query_one("#status-bar", Static)
         status_bar.update(" │ ".join(parts))
+        self._update_bindings_bar()
+
+    def _update_bindings_bar(self) -> None:
+        """Render one-line shortcut hints."""
+        hint = (
+            "[bold cyan]a[/] Add  │ "
+            "[bold cyan]d[/] Del  │ "
+            "[bold cyan]x[/] Del keep  │ "
+            "[bold cyan]space[/] Pause/Start  │ "
+            "[bold cyan]v[/] Verify  │ "
+            "[bold cyan]g[/] Move  │ "
+            "[bold cyan]s[/] Speed  │ "
+            "[bold cyan]t[/] T-speed  │ "
+            "[bold cyan]p[/] Priority  │ "
+            "[bold cyan]/[/] Filter  │ "
+            "[bold cyan]c[/] Status  │ "
+            "[bold cyan]o[/] Progress  │ "
+            "[bold cyan]?[/] Help  │ "
+            "[bold cyan]q[/] Quit"
+        )
+        try:
+            self.query_one("#bindings-bar", Static).update(hint)
+        except Exception:
+            pass
+
+    def _update_limit_badge(self) -> None:
+        """Update the header speed limit badge."""
+        try:
+            badge = self.query_one("#limit-badge", Static)
+        except Exception:
+            return
+        limit_down = self._format_limit(self.global_speed_limit_down)
+        limit_up = self._format_limit(self.global_speed_limit_up)
+        badge.update(f"↓ {limit_down} / ↑ {limit_up}")
+
+    @staticmethod
+    def _format_limit(value: int | None) -> str:
+        return "∞" if not value else str(value)
 
     # -------------------------------------------------------------------------
     # Data Refresh
@@ -515,10 +645,12 @@ class TorshApp(App):
         self._update_status_bar()
 
     async def _check_connection(self) -> bool:
+        previous_state = self._connection_state
+        connected = False
         try:
             await self.controller.ensure_connected()
             self.connection_ok = True
-            return True
+            connected = True
         except TransmissionError:
             self.connection_ok = False
         except Exception:
@@ -530,11 +662,50 @@ class TorshApp(App):
                     await self.controller.ensure_connected()
                     self.connection_ok = True
                     self.notify("🔄 Daemon restarted", severity="warning")
-                    return True
+                    connected = True
                 except Exception:
                     pass
-        self._update_status_bar()
-        return False
+        if self.connection_ok != previous_state:
+            self._notify_connection_change(self.connection_ok)
+        self._connection_state = self.connection_ok
+        if not self.connection_ok:
+            self._update_status_bar()
+        return connected
+
+    def _notify_connection_change(self, connected: bool) -> None:
+        """Show a one-shot notification on connection changes."""
+        message = "🟢 Connection restored" if connected else "⚠️ Connection lost"
+        severity = "information" if connected else "warning"
+        self.notify(message, severity=severity)
+
+    async def _auto_verify(self, torrent_id: int, name: str) -> None:
+        """Trigger a one-time verify after completion."""
+        if torrent_id in self._verified_ids:
+            return
+        try:
+            await self.controller.verify([torrent_id])
+            self._verified_ids.add(torrent_id)
+            self.notify(f"✅ Verified: {name[:30]}", severity="information")
+        except Exception as exc:
+            LOG.debug(f"Auto-verify failed for {torrent_id}: {exc}")
+
+    async def _auto_retry_failed(self, torrents: list[TorrentView]) -> None:
+        """Auto-retry torrents that are in error state."""
+        for t in torrents:
+            status = t.status.lower()
+            if "error" in status and t.percent_done < 100.0:
+                attempts = self._auto_retry_attempts.get(t.id, 0)
+                if attempts >= 3:
+                    continue
+                self._auto_retry_attempts[t.id] = attempts + 1
+                try:
+                    await self.controller.start([t.id])
+                    self.notify(f"🔁 Повторная попытка #{attempts + 1}: {t.name[:30]}", severity="warning")
+                except Exception as exc:
+                    LOG.debug(f"Auto-retry failed for {t.id}: {exc}")
+            else:
+                if t.id in self._auto_retry_attempts:
+                    self._auto_retry_attempts.pop(t.id, None)
 
     async def _refresh_torrents(self) -> None:
         try:
@@ -547,10 +718,16 @@ class TorshApp(App):
                     if t.id in old_torrents and old_torrents[t.id].percent_done < 100.0:
                         self.notify(f"✅ Completed: {t.name[:30]}", severity="information")
                     self._completed_ids.add(t.id)
+                    await self._auto_verify(t.id, t.name)
             
             self._apply_filter()
+            await self._auto_retry_failed(self.torrents)
             self._render_table()
+            self._last_refresh_error = False
         except Exception as exc:
+            if not self._last_refresh_error:
+                self.notify(f"⚠️ Refresh error: {exc}", severity="error")
+            self._last_refresh_error = True
             LOG.error(f"Refresh error: {exc}")
 
     async def _refresh_stats(self) -> None:
@@ -563,6 +740,13 @@ class TorshApp(App):
             self.paused_count = getattr(stats, "paused_torrent_count", 0)
             self._update_disk()
             self._render_disk_bar()
+            try:
+                limits = await self.controller.get_speed_limits()
+                self.global_speed_limit_down = limits.get("down", 0)
+                self.global_speed_limit_up = limits.get("up", 0)
+                self._update_limit_badge()
+            except Exception as limits_error:
+                LOG.debug(f"Speed limits fetch failed: {limits_error}")
         except Exception as exc:
             LOG.error(f"Stats error: {exc}")
 
@@ -572,24 +756,33 @@ class TorshApp(App):
 
     def _render_table(self) -> None:
         table = self.query_one("#table", DataTable)
-        table.clear()
-        
         data = self._sorted(self.filtered or self.torrents)
-        
-        for t in data:
-            progress_bar = ProgressBar(total=100.0, completed=t.percent_done, width=10)
-            table.add_row(
-                Text(str(t.id), justify="right"),
-                Text(t.name, overflow="ellipsis", no_wrap=True),
-                progress_bar,
-                Text(t.eta, justify="right"),
-                Text(t.rate_down, style="green" if t.rate_down != "0 B/s" else "dim", justify="right"),
-                Text(t.rate_up, style="blue" if t.rate_up != "0 B/s" else "dim", justify="right"),
-                styled_ratio(t.ratio),
-                styled_status(t.status),
-                key=str(t.id),
-            )
-        
+        desired_keys = [str(t.id) for t in data]
+
+        # Remove rows that disappeared
+        for row in list(table.ordered_rows):
+            if row.key.value not in desired_keys:
+                table.remove_row(row.key)
+                self._row_cache.pop(int(row.key.value), None)
+
+        row_key_map = {row.key.value: row.key for row in table.ordered_rows}
+        row_obj_map = {row.key.value: row for row in table.ordered_rows}
+
+        for torrent in data:
+            cells, snapshot = self._torrent_cells(torrent)
+            key_str = str(torrent.id)
+            row_key = row_key_map.get(key_str)
+            if row_key is None:
+                row_key = table.add_row(*cells, key=key_str)
+                row_key_map[key_str] = row_key
+            else:
+                cached = self._row_cache.get(torrent.id)
+                if cached != snapshot:
+                    self._update_torrent_row(table, row_key, cells, cached, snapshot)
+            self._row_cache[torrent.id] = snapshot
+
+        self._sync_table_order(table, desired_keys, row_obj_map)
+
         if self.selected_id is not None:
             idx = self._find_row_index(self.selected_id, data)
             if idx is not None:
@@ -603,6 +796,86 @@ class TorshApp(App):
         
         self._render_details()
 
+    def _torrent_cells(self, torrent: TorrentView) -> tuple[tuple[Any, ...], dict[str, Any]]:
+        """Build renderable cells and a lightweight snapshot for diff updates."""
+        progress_bar = ProgressBar(
+            total=100.0,
+            completed=torrent.percent_done,
+            width=12,
+            pulse=torrent.percent_done < 100.0 and torrent.status == "downloading",
+            complete_style="bold cyan",
+            finished_style="magenta",
+        )
+        down_style = "bold green" if torrent.rate_down != "0 B/s" else "dim"
+        up_style = "bold blue" if torrent.rate_up != "0 B/s" else "dim"
+
+        cells = (
+            Text(str(torrent.id), justify="right"),
+            Text(torrent.name, overflow="ellipsis", no_wrap=True),
+            progress_bar,
+            Text(torrent.eta, justify="right"),
+            Text(torrent.rate_down, style=down_style, justify="right"),
+            Text(torrent.rate_up, style=up_style, justify="right"),
+            styled_ratio(torrent.ratio),
+            styled_status(torrent.status),
+        )
+        snapshot = {
+            "name": torrent.name,
+            "progress": round(torrent.percent_done, 2),
+            "eta": torrent.eta,
+            "rate_down": torrent.rate_down,
+            "rate_up": torrent.rate_up,
+            "ratio": round(torrent.ratio, 3),
+            "status": torrent.status,
+        }
+        return cells, snapshot
+
+    def _update_torrent_row(
+        self,
+        table: DataTable,
+        row_key: Any,
+        cells: tuple[Any, ...],
+        cached: dict[str, Any] | None,
+        snapshot: dict[str, Any],
+    ) -> None:
+        """Update only the cells that actually changed."""
+
+        def changed(field: str) -> bool:
+            return cached is None or cached.get(field) != snapshot[field]
+
+        if changed("name"):
+            table.update_cell(row_key, self._table_columns["name"], cells[1])
+        if changed("progress") or changed("eta"):
+            table.update_cell(row_key, self._table_columns["progress"], cells[2])
+            table.update_cell(row_key, self._table_columns["eta"], cells[3])
+        if changed("rate_down"):
+            table.update_cell(row_key, self._table_columns["down"], cells[4])
+        if changed("rate_up"):
+            table.update_cell(row_key, self._table_columns["up"], cells[5])
+        if changed("ratio"):
+            table.update_cell(row_key, self._table_columns["ratio"], cells[6])
+        if changed("status"):
+            table.update_cell(row_key, self._table_columns["status"], cells[7])
+
+    def _sync_table_order(
+        self,
+        table: DataTable,
+        desired_keys: list[str],
+        row_obj_map: dict[str, Any],
+    ) -> None:
+        """Reorder rows to match sorted data without nuking the table."""
+        try:
+            ordered_rows = []
+            for key in desired_keys:
+                row_obj = row_obj_map.get(key)
+                if row_obj is not None:
+                    ordered_rows.append(row_obj)
+            if ordered_rows and ordered_rows != table.ordered_rows:
+                table.ordered_rows[:] = ordered_rows
+                table.refresh(layout=False)
+        except Exception as exc:
+            LOG.debug(f"Row reorder skipped: {exc}")
+
     def _find_row_index(self, torrent_id: int, data: list[TorrentView]) -> int | None:
         for idx, t in enumerate(data):
             if t.id == torrent_id:
@@ -615,6 +888,14 @@ class TorshApp(App):
         torrent = next((t for t in data if t.id == self.selected_id), None)
         
         if torrent:
+            if self._files_torrent_id != torrent.id:
+                self._files_torrent_id = torrent.id
+                self._files_cache.clear()
+                self.query_one("#files-table", DataTable).clear()
+            if self._trackers_torrent_id != torrent.id:
+                self._trackers_torrent_id = torrent.id
+                self._trackers_cache.clear()
+                self.query_one("#trackers-table", DataTable).clear()
             md = f"""
 ## {torrent.name}
 
@@ -635,6 +916,10 @@ class TorshApp(App):
             details.update("_Select a torrent to view details_")
             self.query_one("#files-table", DataTable).clear()
             self.query_one("#trackers-table", DataTable).clear()
+            self._files_cache.clear()
+            self._trackers_cache.clear()
+            self._files_torrent_id = None
+            self._trackers_torrent_id = None
 
     async def _update_files_tab(self, torrent_id: int) -> None:
         tabbed = self.query_one(TabbedContent)
@@ -643,29 +928,75 @@ class TorshApp(App):
         
         try:
             files = await self.controller.get_files(torrent_id)
-            if not files:
+            if files is None:
                 return
-            
             ft = self.query_one("#files-table", DataTable)
-            if ft.row_count != len(files):
+
+            if self._files_torrent_id != torrent_id:
                 ft.clear()
-            
-            if ft.row_count == 0:
-                for idx, f in files.items():
-                    size = humanize.naturalsize(f.get("length", 0), binary=True)
-                    completed = f.get("bytesCompleted", 0)
-                    length = f.get("length", 1)
-                    percent = (completed / length) * 100 if length > 0 else 0
-                    pri = f.get("priority", 0)
-                    pri_icon = "⬆" if pri > 0 else ("⬇" if pri < 0 else "―")
-                    ft.add_row(
-                        Text(f.get("name", "Unknown"), overflow="ellipsis"),
-                        Text(size, justify="right"),
-                        Text(format_percent(percent), justify="right"),
-                        Text(pri_icon, justify="center"),
-                    )
-        except Exception:
-            pass
+                self._files_cache.clear()
+                self._files_torrent_id = torrent_id
+
+            desired_keys = [str(idx) for idx in sorted(files.keys())]
+
+            # Remove missing rows
+            for row in list(ft.ordered_rows):
+                if row.key.value not in desired_keys:
+                    ft.remove_row(row.key)
+                    self._files_cache.pop(int(row.key.value), None)
+
+            row_key_map = {row.key.value: row.key for row in ft.ordered_rows}
+            row_obj_map = {row.key.value: row for row in ft.ordered_rows}
+
+            for idx, f in sorted(files.items()):
+                size = humanize.naturalsize(f.get("length", 0), binary=True)
+                completed = f.get("bytesCompleted", 0)
+                length = f.get("length", 1)
+                percent = (completed / length) * 100 if length > 0 else 0
+                pri = f.get("priority", 0)
+                pri_icon = "⬆" if pri > 0 else ("⬇" if pri < 0 else "―")
+
+                cells = (
+                    Text(f.get("name", "Unknown"), overflow="ellipsis"),
+                    Text(size, justify="right"),
+                    Text(format_percent(percent), justify="right"),
+                    Text(pri_icon, justify="center"),
+                )
+                snapshot = {
+                    "name": f.get("name", "Unknown"),
+                    "size": size,
+                    "percent": round(percent, 2),
+                    "priority": pri,
+                }
+                key_str = str(idx)
+                row_key = row_key_map.get(key_str)
+                if row_key is None:
+                    row_key = ft.add_row(*cells, key=key_str)
+                    row_key_map[key_str] = row_key
+                else:
+                    cached = self._files_cache.get(idx)
+                    if cached != snapshot:
+                        if cached is None or cached.get("name") != snapshot["name"]:
+                            ft.update_cell(row_key, self._files_columns["name"], cells[0])
+                        if cached is None or cached.get("size") != snapshot["size"]:
+                            ft.update_cell(row_key, self._files_columns["size"], cells[1])
+                        if cached is None or cached.get("percent") != snapshot["percent"]:
+                            ft.update_cell(row_key, self._files_columns["done"], cells[2])
+                        if cached is None or cached.get("priority") != snapshot["priority"]:
+                            ft.update_cell(row_key, self._files_columns["priority"], cells[3])
+                self._files_cache[idx] = snapshot
+
+            # Keep original ordering based on file index
+            ordered_rows = []
+            for key in desired_keys:
+                row_obj = row_obj_map.get(key)
+                if row_obj is not None:
+                    ordered_rows.append(row_obj)
+            if ordered_rows and ordered_rows != ft.ordered_rows:
+                ft.ordered_rows[:] = ordered_rows
+                ft.refresh(layout=False)
+        except Exception as exc:
+            LOG.debug(f"Files tab update skipped: {exc}")
 
     async def _update_trackers_tab(self, torrent_id: int) -> None:
         """Update the trackers table for the selected torrent."""
@@ -676,17 +1007,30 @@ class TorshApp(App):
         try:
             trackers = await self.controller.get_trackers(torrent_id)
             tt = self.query_one("#trackers-table", DataTable)
-            tt.clear()
-            
-            for t in trackers:
-                host = t.get("host", "unknown")
+
+            if self._trackers_torrent_id != torrent_id:
+                tt.clear()
+                self._trackers_cache.clear()
+                self._trackers_torrent_id = torrent_id
+
+            desired_keys = [f"{idx}-{t.get('host', 'unknown')}" for idx, t in enumerate(trackers)]
+
+            for row in list(tt.ordered_rows):
+                if row.key.value not in desired_keys:
+                    tt.remove_row(row.key)
+                    self._trackers_cache.pop(row.key.value, None)
+
+            row_key_map = {row.key.value: row.key for row in tt.ordered_rows}
+            row_obj_map = {row.key.value: row for row in tt.ordered_rows}
+
+            for idx, tracker in enumerate(trackers):
+                host = tracker.get("host", "unknown")
                 if len(host) > 30:
                     host = host[:27] + "..."
-                status = t.get("status", "")
+                status = tracker.get("status", "")
                 if len(status) > 15:
                     status = status[:12] + "..."
                 
-                # Color status
                 if "success" in status.lower() or status == "":
                     status_text = Text(status or "OK", style="green")
                 elif "error" in status.lower():
@@ -694,15 +1038,50 @@ class TorshApp(App):
                 else:
                     status_text = Text(status, style="yellow")
                 
-                tt.add_row(
+                cells = (
                     Text(host),
                     status_text,
-                    Text(str(t.get("peers", 0)), justify="right"),
-                    Text(str(t.get("seeders", 0)), justify="right"),
-                    Text(str(t.get("leechers", 0)), justify="right"),
+                    Text(str(tracker.get("peers", 0)), justify="right"),
+                    Text(str(tracker.get("seeders", 0)), justify="right"),
+                    Text(str(tracker.get("leechers", 0)), justify="right"),
                 )
-        except Exception:
-            pass
+                key_str = f"{idx}-{tracker.get('host', 'unknown')}"
+                snapshot = {
+                    "host": host,
+                    "status": status_text.plain,
+                    "peers": tracker.get("peers", 0),
+                    "seeders": tracker.get("seeders", 0),
+                    "leechers": tracker.get("leechers", 0),
+                }
+                row_key = row_key_map.get(key_str)
+                if row_key is None:
+                    row_key = tt.add_row(*cells, key=key_str)
+                    row_key_map[key_str] = row_key
+                else:
+                    cached = self._trackers_cache.get(key_str)
+                    if cached != snapshot:
+                        if cached is None or cached.get("host") != snapshot["host"]:
+                            tt.update_cell(row_key, self._trackers_columns["host"], cells[0])
+                        if cached is None or cached.get("status") != snapshot["status"]:
+                            tt.update_cell(row_key, self._trackers_columns["status"], cells[1])
+                        if cached is None or cached.get("peers") != snapshot["peers"]:
+                            tt.update_cell(row_key, self._trackers_columns["peers"], cells[2])
+                        if cached is None or cached.get("seeders") != snapshot["seeders"]:
+                            tt.update_cell(row_key, self._trackers_columns["seeders"], cells[3])
+                        if cached is None or cached.get("leechers") != snapshot["leechers"]:
+                            tt.update_cell(row_key, self._trackers_columns["leechers"], cells[4])
+                self._trackers_cache[key_str] = snapshot
+
+            ordered_rows = []
+            for key in desired_keys:
+                row_obj = row_obj_map.get(key)
+                if row_obj is not None:
+                    ordered_rows.append(row_obj)
+            if ordered_rows and ordered_rows != tt.ordered_rows:
+                tt.ordered_rows[:] = ordered_rows
+                tt.refresh(layout=False)
+        except Exception as exc:
+            LOG.debug(f"Trackers tab update skipped: {exc}")
 
     def _render_disk_bar(self) -> None:
         disk_bar = self.query_one("#disk-bar", Static)
@@ -822,6 +1201,11 @@ class TorshApp(App):
             subdir = str(Path(subdir).expanduser())
             try:
                 torrent = await self.controller.add(link, subdir)
+                try:
+                    await self.controller.start([torrent.id])
+                except Exception:
+                    # If already running or cannot start, ignore.
+                    pass
                 self.notify(f"➕ Added: {torrent.name[:30]}", severity="information")
                 await self.refresh_all()
             except Exception as e:
@@ -859,8 +1243,8 @@ class TorshApp(App):
         torrent = self._current()
         if not torrent:
             return
-        confirm = await self._show_modal(ConfirmScreen(f"Delete '{torrent.name}'?\n(Data will also be removed)"))
-        if confirm:
+
+        async def _remove() -> None:
             try:
                 await self.controller.remove([torrent.id], delete_data=True)
                 self._completed_ids.discard(torrent.id)
@@ -868,6 +1252,40 @@ class TorshApp(App):
                 await self.refresh_all()
             except Exception as e:
                 self.notify(f"❌ Error: {e}", severity="error")
+
+        def _on_dismiss(result: bool | None) -> None:
+            if result:
+                self.run_worker(_remove())
+
+        self._show_modal_with_callback(
+            ConfirmScreen(f"Delete '{torrent.name}'?\n(Data will also be removed)"),
+            _on_dismiss,
+        )
+
+    async def action_delete_keep(self) -> None:
+        if not await self._check_connection():
+            return
+        torrent = self._current()
+        if not torrent:
+            return
+
+        async def _remove() -> None:
+            try:
+                await self.controller.remove([torrent.id], delete_data=False)
+                self._completed_ids.discard(torrent.id)
+                self.notify(f"🗑 Deleted (kept data): {torrent.name[:20]}", severity="warning")
+                await self.refresh_all()
+            except Exception as e:
+                self.notify(f"❌ Error: {e}", severity="error")
+
+        def _on_dismiss(result: bool | None) -> None:
+            if result:
+                self.run_worker(_remove())
+
+        self._show_modal_with_callback(
+            ConfirmScreen(f"Delete '{torrent.name}'?\n(Data will be kept)"),
+            _on_dismiss,
+        )
 
     async def action_move(self) -> None:
         if not await self._check_connection():
@@ -892,6 +1310,10 @@ class TorshApp(App):
         if result:
             down, up = result
             await self.controller.set_speed_limits(down, up)
+            self.global_speed_limit_down = down
+            self.global_speed_limit_up = up
+            self._update_limit_badge()
+            self._update_status_bar()
             self.notify(f"⚡ Speed: ↓{down} ↑{up} KiB/s", severity="information")
 
     async def action_torrent_speed(self) -> None:
@@ -921,6 +1343,21 @@ class TorshApp(App):
             high, normal, low = result
             await self.controller.set_priority(torrent.id, high, normal, low)
             self.notify("📋 Priorities updated", severity="information")
+
+    async def action_verify(self) -> None:
+        """Manual verify for the current torrent."""
+        if not await self._check_connection():
+            return
+        torrent = self._current()
+        if not torrent:
+            return
+        try:
+            await self.controller.verify([torrent.id])
+            self._verified_ids.add(torrent.id)
+            self.notify(f"🔎 Verified: {torrent.name[:30]}", severity="information")
+            await self.refresh_all()
+        except Exception as exc:
+            self.notify(f"❌ Verify failed: {exc}", severity="error")
 
     async def action_filter(self) -> None:
         result = await self._show_modal(FilterScreen(self.filter_text))
@@ -992,9 +1429,9 @@ class TorshApp(App):
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """Refresh tab content when switching tabs."""
         if self.selected_id:
-            if event.tab.id == "files-tab":
+            if event.tab.id == "files":
                 asyncio.create_task(self._update_files_tab(self.selected_id))
-            elif event.tab.id == "trackers-tab":
+            elif event.tab.id == "trackers":
                 asyncio.create_task(self._update_trackers_tab(self.selected_id))
 
     # -------------------------------------------------------------------------
@@ -1022,6 +1459,18 @@ class TorshApp(App):
             callback(result)
 
         self.push_screen(screen, callback=on_dismiss)
+
+    async def _show_modal(self, screen: ModalScreen[T]) -> T | None:
+        """Show modal screen and wait for result using callback + Future."""
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[T | None] = loop.create_future()
+
+        def _callback(result: T | None) -> None:
+            if not future.done():
+                future.set_result(result)
+
+        self._show_modal_with_callback(screen, _callback)
+        return await future
 
     def _persist_ui(self) -> None:
         self.config.ui.refresh_interval = self.refresh_interval

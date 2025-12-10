@@ -1,27 +1,29 @@
 /*
- * Torsh TUI Stylesheet - Enhanced
- * Theme: Tokyo Night
- * 
- * Note: Variables prefixed with 'torsh-' to avoid Textual conflicts
+ * Torsh TUI Stylesheet - Premium Cyberpunk Edition
+ * Theme: Neon Night
  */
 
 /* ==========================================================================
    THEME VARIABLES
    ========================================================================== */
 
-$torsh-bg: #1a1b26;
-$torsh-fg: #a9b1d6;
-$torsh-panel: #24283b;
-$torsh-border: #414868;
-$torsh-accent: #7aa2f7;
-$torsh-success: #9ece6a;
-$torsh-warning: #e0af68;
-$torsh-error: #f7768e;
-$torsh-muted: #565f89;
+$torsh-bg: #080b16;           /* Deeper midnight base */
+$torsh-panel: #0f1324;        /* Panel tint for contrast */
+$torsh-fg: #b7c4ff;           /* Soft neon-tinged text */
+$torsh-fg-dim: #6b7394;       /* Dimmed text */
+$torsh-border: #24304a;       /* Border chrome */
+
+/* Accents (Cyberpunk) */
+$torsh-primary: #00f0ff;      /* Cyan Neon */
+$torsh-secondary: #ff3cac;    /* Magenta Neon */
+$torsh-tertiary: #8f7fff;     /* Purple Neon */
+$torsh-success: #2effa8;      /* Bright Green Neon */
+$torsh-warning: #ffcf6f;      /* Amber Neon */
+$torsh-error: #ff5f6d;        /* Red Neon */
 
 /* Zebra striping */
-$torsh-zebra-light: #1e2030;
-$torsh-zebra-dark: #1a1b26;
+$torsh-zebra-even: #0b1020;   /* Very subtle difference */
+$torsh-zebra-odd: #080b16;
 
 /* ==========================================================================
    GLOBAL STYLES
@@ -37,31 +39,49 @@ Screen {
    ========================================================================== */
 
 #app-header {
-    height: 3;
+    height: 5;
     dock: top;
     background: $torsh-panel;
-    border-bottom: solid $torsh-border;
-    padding: 0 1;
+    border-bottom: double $torsh-border;
+    padding: 0 2;
     layout: horizontal;
     align-vertical: middle;
 }
 
+#title-stack {
+    width: 40%;
+    layout: vertical;
+}
+
+#title-art {
+    text-style: bold italic;
+    color: $torsh-secondary;
+    background: $torsh-bg;
+    border: double $torsh-primary;
+    padding: 0 1;
+    height: 3;
+}
+
 .app-title {
     text-style: bold;
-    color: $torsh-accent;
-    width: auto;
+    color: $torsh-primary;
+    background: $torsh-bg;
+    border: none;
+    padding: 0;
     margin-right: 1;
+    text-align: left;
 }
 
 #status-bar {
-    width: auto;
-    min-width: 30;
-    padding: 0 2;
+    width: 1fr;
     color: $torsh-fg;
+    content-align: left middle;
+    text-style: bold;
+    padding-top: 0;
 }
 
 #header-stats {
-    width: 1fr;
+    width: 60%;
     height: 100%;
     align-horizontal: right;
     layout: horizontal;
@@ -70,14 +90,27 @@ Screen {
 .stat-box {
     width: auto;
     height: 100%;
-    padding: 0 1;
+    padding: 0 2;
     border-left: solid $torsh-border;
     align-vertical: middle;
     layout: horizontal;
+    background: $torsh-bg;
 }
 
 .stat-label {
-    color: $torsh-muted;
+    color: $torsh-secondary;
+    text-style: bold;
+    margin-right: 1;
+}
+
+#limit-badge {
+    background: $torsh-bg;
+    color: $torsh-success;
+    border: double $torsh-secondary;
+    text-style: bold;
+    padding: 0 1;
+    min-width: 16;
+    content-align: left middle;
 }
 
 /* ==========================================================================
@@ -85,14 +118,14 @@ Screen {
    ========================================================================== */
 
 Sparkline {
-    width: 15;
+    width: 20;
     height: 100%;
     margin: 0 1;
     color: $torsh-success;
 }
 
 Sparkline.-upload {
-    color: $torsh-warning;
+    color: $torsh-secondary;
 }
 
 /* ==========================================================================
@@ -105,17 +138,18 @@ Sparkline.-upload {
 }
 
 #torrent-list-container {
-    width: 60%;
+    width: 65%;
     height: 100%;
-    border-right: solid $torsh-border;
+    border-right: double $torsh-border;
     background: $torsh-bg;
 }
 
 #details-container {
-    width: 40%;
+    width: 35%;
     height: 100%;
-    background: $torsh-bg;
+    background: $torsh-panel;
     layout: vertical;
+    border-left: double $torsh-border; 
 }
 
 /* ==========================================================================
@@ -126,32 +160,41 @@ DataTable {
     background: $torsh-bg;
     border: none;
     height: 1fr;
+    scrollbar-gutter: stable;
 }
 
 DataTable > .datatable--header {
     background: $torsh-panel;
-    color: $torsh-accent;
-    text-style: bold;
+    color: $torsh-secondary;
+    text-style: bold reverse;
+    border-bottom: double $torsh-primary;
 }
 
 DataTable > .datatable--cursor {
-    background: $torsh-accent;
-    color: $torsh-bg;
+    background: $torsh-secondary;
+    color: white;
     text-style: bold;
+    border: none;
 }
 
 DataTable > .datatable--even-row {
-    background: $torsh-zebra-light;
+    background: $torsh-zebra-even;
 }
 
 DataTable > .datatable--odd-row {
-    background: $torsh-zebra-dark;
+    background: $torsh-zebra-odd;
+}
+
+DataTable > .datatable--row:hover {
+    background: $torsh-border;
+    color: $torsh-primary;
 }
 
 #files-table, #trackers-table {
     height: 1fr;
     width: 100%;
     border: none;
+    background: $torsh-panel;
 }
 
 /* ==========================================================================
@@ -160,36 +203,44 @@ DataTable > .datatable--odd-row {
 
 TabbedContent {
     height: 1fr;
+    background: $torsh-panel;
 }
 
 Tabs {
     background: $torsh-panel;
     border-bottom: solid $torsh-border;
     dock: top;
+    height: 3;
 }
 
 Tab {
-    color: $torsh-muted;
+    color: $torsh-fg-dim;
     padding: 0 2;
+    height: 3;
+    border-top: none;
 }
 
 Tab:hover {
-    color: $torsh-fg;
+    color: $torsh-primary;
 }
 
 Tab.-active {
-    color: $torsh-accent;
-    border-bottom: solid $torsh-accent;
+    color: $torsh-bg;
+    background: $torsh-primary;
     text-style: bold;
+    border-bottom: none;
 }
 
 TabPane {
     padding: 1;
-    background: $torsh-bg;
+    background: $torsh-panel;
 }
 
 #details-view {
-    padding: 1;
+    padding: 1 2;
+    background: $torsh-panel;
+    color: $torsh-fg;
+    border: solid $torsh-border;
 }
 
 /* ==========================================================================
@@ -206,27 +257,28 @@ PriorityScreen,
 FilterScreen,
 HelpScreen {
     align: center middle;
-    background: rgba(26, 27, 38, 0.85);
+    background: rgba(15, 17, 26, 0.9);
 }
 
 .modal-container {
-    width: 70;
+    width: 60;
     height: auto;
-    min-height: 12;
+    min-height: 10;
     max-height: 80%;
     background: $torsh-panel;
-    border: round $torsh-accent;
-    padding: 1 3;
+    border: double $torsh-secondary;
+    padding: 1 2;
     layout: vertical;
 }
 
 .modal-title {
-    text-style: bold;
-    color: $torsh-accent;
+    text-style: bold reverse;
+    color: $torsh-primary;
+    background: $torsh-bg;
     text-align: center;
     padding: 1 0;
-    border-bottom: hkey $torsh-border;
-    margin-bottom: 1;
+    margin-bottom: 2;
+    border: double $torsh-primary;
     width: 100%;
 }
 
@@ -234,10 +286,11 @@ HelpScreen {
     text-align: center;
     padding: 1;
     color: $torsh-fg;
+    text-style: bold;
 }
 
 Label {
-    color: $torsh-muted;
+    color: $torsh-fg;
     margin-top: 1;
 }
 
@@ -248,13 +301,14 @@ Label {
 Input {
     background: $torsh-bg;
     border: solid $torsh-border;
-    color: $torsh-fg;
+    color: $torsh-primary;
     margin: 1 0;
     width: 100%;
 }
 
 Input:focus {
-    border: solid $torsh-accent;
+    border: double $torsh-secondary;
+    background: $torsh-zebra-even;
 }
 
 Button {
@@ -262,35 +316,42 @@ Button {
     color: $torsh-fg;
     border: none;
     margin: 0 1;
-    min-width: 10;
+    min-width: 12;
+    height: 3;
 }
 
 Button:hover {
-    background: $torsh-accent;
+    background: $torsh-primary;
     color: $torsh-bg;
+    text-style: bold;
 }
 
 Button:focus {
-    background: $torsh-accent;
-    color: $torsh-bg;
+    border: solid $torsh-secondary;
 }
 
 Button.-primary {
-    background: $torsh-accent;
+    background: $torsh-secondary;
+    color: white;
+    text-style: bold;
+}
+
+Button.-primary:hover {
+    background: $torsh-primary;
     color: $torsh-bg;
     text-style: bold;
 }
 
 Button#cancel:hover {
     background: $torsh-error;
-    color: $torsh-bg;
+    color: white;
 }
 
 .buttons {
-    margin-top: 1;
+    margin-top: 2;
     align-horizontal: center;
     width: 100%;
-    height: 3;
+    height: 4;
 }
 
 SelectionList {
@@ -300,42 +361,20 @@ SelectionList {
     scrollbar-gutter: stable;
 }
 
+Footer {
+    background: $torsh-panel;
+    color: $torsh-fg-dim;
+    border-top: double $torsh-border;
+}
+
 /* ==========================================================================
-   MODAL OVERRIDES
+   MODAL SPECIFICS
    ========================================================================== */
 
-#add-box,
-#move-box,
-#speed-box,
-#prio-box,
-#filter-box,
-#help-box,
-#confirm-box {
-    border: round $torsh-accent;
-    width: 80%;
-    max-width: 90;
-    background: $torsh-panel;
-    padding: 2 3;
-}
-
-#add-box {
-    min-height: 16;
-}
-
-#confirm-box {
-    max-width: 60;
-    min-height: 10;
-}
-
-#help-box {
-    max-width: 70;
-    height: auto;
-    max-height: 90%;
-}
-
-#speed-box {
-    max-width: 50;
-}
+#add-box { width: 70; }
+#confirm-box { width: 50; }
+#help-box { width: 80; }
+#speed-box { width: 50; }
 
 /* ==========================================================================
    NOTIFICATIONS (Toast)
@@ -344,21 +383,22 @@ SelectionList {
 Toast {
     background: $torsh-panel;
     color: $torsh-fg;
-    border: tall $torsh-accent;
+    border-left: thick $torsh-border;
     padding: 1 2;
+    margin: 1 0;
 }
 
 Toast.-information {
-    border: tall $torsh-success;
-    background: rgba(158, 206, 106, 0.15);
+    border-left: thick $torsh-success;
+    color: $torsh-success;
 }
 
 Toast.-warning {
-    border: tall $torsh-warning;
-    background: rgba(224, 175, 104, 0.15);
+    border-left: thick $torsh-warning;
+    color: $torsh-warning;
 }
 
 Toast.-error {
-    border: tall $torsh-error;
-    background: rgba(247, 118, 142, 0.15);
+    border-left: thick $torsh-error;
+    color: $torsh-error;
 }

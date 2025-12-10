@@ -129,6 +129,7 @@ class AddTorrentScreen(BaseModalScreen[tuple[str, str] | None]):
     def _submit(self) -> None:
         link = self.query_one("#link", Input).value.strip()
         directory = self.query_one("#dir", Input).value.strip()
+        LOG.info(f"AddTorrentScreen._submit: link='{link}', dir='{directory}'")
         if link:
             self.dismiss((link, directory or self.download_dir))
         else:
@@ -794,12 +795,6 @@ class TorshApp(App):
     # Actions
     # -------------------------------------------------------------------------
 
-    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Block app-level actions while modal is open."""
-        if self._modal_depth > 0:
-            return False
-        return True
-
     def action_cursor_down(self) -> None:
         self.query_one("#table", DataTable).action_cursor_down()
 
@@ -814,21 +809,32 @@ class TorshApp(App):
 
     async def action_add(self) -> None:
         if not await self._check_connection():
+            self.notify("❌ Not connected", severity="error")
             return
-        result = await self._show_modal(AddTorrentScreen(str(self.config.paths.download_dir)))
-        if not result:
-            return
-        link, subdir = result
-        link_path = Path(link).expanduser()
-        if link_path.exists():
-            link = str(link_path)
-        subdir = str(Path(subdir).expanduser())
-        try:
-            await self.controller.add(link, subdir)
-            self.notify(f"➕ Added torrent", severity="information")
-            await self.refresh_all()
-        except Exception as e:
-            self.notify(f"❌ Failed: {e}", severity="error")
+
+        async def handle_add_result(result: tuple[str, str] | None) -> None:
+            if not result:
+                return
+            link, subdir = result
+            link_path = Path(link).expanduser()
+            if link_path.exists():
+                link = str(link_path)
+            subdir = str(Path(subdir).expanduser())
+            try:
+                torrent = await self.controller.add(link, subdir)
+                self.notify(f"➕ Added: {torrent.name[:30]}", severity="information")
+                await self.refresh_all()
+            except Exception as e:
+                self.notify(f"❌ Failed: {e}", severity="error")
+
+        def on_dismiss(result: tuple[str, str] | None) -> None:
+            if result:
+                self.run_worker(handle_add_result(result))
+
+        self._show_modal_with_callback(
+            AddTorrentScreen(str(self.config.paths.download_dir)),
+            on_dismiss
+        )
 
     async def action_toggle(self) -> None:
         if not await self._check_connection():
@@ -1000,24 +1006,22 @@ class TorshApp(App):
             return None
         return next((t for t in self.torrents if t.id == self.selected_id), None)
 
-    async def _show_modal(self, screen: ModalScreen[T]) -> T | None:
-        # Помечаем, что мы внутри модального окна и временно останавливаем автообновление.
+    def _show_modal_with_callback(self, screen: ModalScreen[T], callback: Any) -> None:
+        """Show modal screen with callback on dismiss."""
         self._modal_depth += 1
         refresh_interval = self.refresh_interval
-        try:
-            return await self.push_screen_wait(screen)
-        except Exception:
-            return None
-        finally:
-            # Возобновляем autorefresh только после закрытия всех модалок.
+
+        def on_dismiss(result: T | None) -> None:
             self._modal_depth = max(0, self._modal_depth - 1)
             if self._modal_depth == 0:
-                # Перезапускаем интервал, если он был остановлен или упал.
                 try:
-                    if self._refresh_timer is None or self._refresh_timer.callback != self.refresh_all:
+                    if self._refresh_timer is None:
                         self._refresh_timer = self.set_interval(refresh_interval, self.refresh_all)
                 except Exception:
-                    self._refresh_timer = self.set_interval(refresh_interval, self.refresh_all)
+                    pass
+            callback(result)
+
+        self.push_screen(screen, callback=on_dismiss)
 
     def _persist_ui(self) -> None:
         self.config.ui.refresh_interval = self.refresh_interval

@@ -11,7 +11,10 @@ def get_logger(name: str) -> logging.Logger:
     level = os.environ.get("TORSH_LOG_LEVEL", "INFO").upper()
     logger.setLevel(level)
 
-    handler = logging.StreamHandler()
+    # Write to file instead of stderr to not break TUI
+    log_file = Path.home() / ".cache" / "torsh" / "debug.log"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     handler.setFormatter(logging.Formatter(fmt))
     logger.addHandler(handler)

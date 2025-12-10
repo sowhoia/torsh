@@ -199,11 +199,11 @@ class TransmissionController:
             rate_up=humanize.naturalsize(t.rate_upload) + "/s",
             ratio=float(t.ratio or 0),
             size=humanize.naturalsize(t.total_size or 0),
-            added=t.date_added,
+            added=t.added_date,
             download_dir=t.download_dir,
-            peers=len(t.peers) if t.peers else 0,
-            seeders=t.seeders or 0,
-            leechers=t.leechers or 0,
+            peers=t.peers_connected or 0,
+            seeders=t.peers_sending_to_us or 0,
+            leechers=t.peers_getting_from_us or 0,
         )
 
 

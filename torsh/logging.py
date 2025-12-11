@@ -1,40 +1,62 @@
+from __future__ import annotations
+
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 
 
-def get_logger(name: str) -> logging.Logger:
+DEFAULT_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+DEFAULT_LEVEL = os.environ.get("TORSH_LOG_LEVEL", "INFO").upper()
+DEFAULT_LOG_PATH = Path(os.environ.get("TORSH_LOG_FILE", "") or (Path.home() / ".cache" / "torsh" / "debug.log"))
+
+
+def _build_handler(to_stdout: bool, path: Optional[Path]) -> logging.Handler:
+    if to_stdout:
+        handler = logging.StreamHandler()
+    else:
+        target = path or DEFAULT_LOG_PATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(target, mode="a", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(DEFAULT_FORMAT))
+    return handler
+
+
+def configure_logger(
+    name: str,
+    *,
+    level: str | int | None = None,
+    to_stdout: bool | None = None,
+    path: Optional[Path] = None,
+) -> logging.Logger:
+    """Create or reuse a logger with consistent handlers."""
     logger = logging.getLogger(name)
     if logger.handlers:
         return logger
 
-    level = os.environ.get("TORSH_LOG_LEVEL", "INFO").upper()
-    logger.setLevel(level)
+    resolved_level = level or DEFAULT_LEVEL
+    resolved_stdout = to_stdout if to_stdout is not None else _env_bool("TORSH_LOG_TO_STDOUT", False)
 
-    # Write to file instead of stderr to not break TUI
-    log_file = Path.home() / ".cache" / "torsh" / "debug.log"
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
-    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    handler.setFormatter(logging.Formatter(fmt))
+    logger.setLevel(resolved_level)
+    handler = _build_handler(resolved_stdout, path)
     logger.addHandler(handler)
     logger.propagate = False
     return logger
+
+
+def get_logger(name: str) -> logging.Logger:
+    """Backward-compatible entry point for the app."""
+    return configure_logger(name)
 
 
 def setup_file_logger(path: Path) -> logging.Logger:
-    logger = logging.getLogger("torsh.file")
-    if logger.handlers:
-        return logger
+    return configure_logger("torsh.file", to_stdout=False, path=path, level=DEFAULT_LEVEL)
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handler = logging.FileHandler(path, encoding="utf-8")
-    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    handler.setFormatter(logging.Formatter(fmt))
 
-    logger.setLevel(logging.INFO)
-    logger.addHandler(handler)
-    logger.propagate = False
-    return logger
+def _env_bool(key: str, default: bool) -> bool:
+    value = os.environ.get(key)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
 
 

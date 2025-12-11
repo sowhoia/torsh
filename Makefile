@@ -2,7 +2,7 @@ APP?=torsh
 VERSION?=$(shell python3 -c "import torsh;print(torsh.__version__)" 2>/dev/null || echo 0.1.0)
 DIST_DIR:=dist
 
-.PHONY: dist sdist wheel deb rpm brew clean
+.PHONY: dist sdist wheel deb rpm brew clean test check
 
 dist: sdist wheel
 
@@ -26,4 +26,10 @@ brew:
 
 clean:
 	rm -rf $(DIST_DIR) build *.egg-info
+
+test:
+	python3 -m pytest
+
+check:
+	python3 -m compileall torsh
 

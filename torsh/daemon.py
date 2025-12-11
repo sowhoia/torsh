@@ -1,4 +1,3 @@
-import os
 import shutil
 import subprocess
 import time
@@ -36,30 +35,33 @@ def _detect_package_manager() -> str | None:
 
 
 def _install_transmission(manager: str) -> bool:
-    commands = {
-        "apt-get": ["sudo", "apt-get", "update", "&&", "sudo", "apt-get", "-y", "install", "transmission-daemon"],
-        "apt": ["sudo", "apt", "update", "&&", "sudo", "apt", "-y", "install", "transmission-daemon"],
-        "brew": ["brew", "install", "transmission"],
-        "dnf": ["sudo", "dnf", "-y", "install", "transmission-daemon"],
-        "yum": ["sudo", "yum", "-y", "install", "transmission-daemon"],
-        "pacman": ["sudo", "pacman", "-Sy", "--noconfirm", "transmission-cli"],
-        "zypper": ["sudo", "zypper", "--non-interactive", "install", "transmission-daemon"],
-    }
-    cmd = commands.get(manager)
-    if not cmd:
+    steps = {
+        "apt-get": [
+            ["sudo", "apt-get", "update"],
+            ["sudo", "apt-get", "-y", "install", "transmission-daemon"],
+        ],
+        "apt": [
+            ["sudo", "apt", "update"],
+            ["sudo", "apt", "-y", "install", "transmission-daemon"],
+        ],
+        "brew": [["brew", "install", "transmission"]],
+        "dnf": [["sudo", "dnf", "-y", "install", "transmission-daemon"]],
+        "yum": [["sudo", "yum", "-y", "install", "transmission-daemon"]],
+        "pacman": [["sudo", "pacman", "-Sy", "--noconfirm", "transmission-cli"]],
+        "zypper": [["sudo", "zypper", "--non-interactive", "install", "transmission-daemon"]],
+    }.get(manager)
+
+    if not steps:
         return False
+
     LOG.info("Trying to install transmission via %s", manager)
     try:
-        # emulate '&&' without shell
-        if "&&" in cmd:
-            # apt/apt-get branch
-            update = cmd[:3]
-            install = cmd[4:]
-            subprocess.run(update, check=False)
-            result = subprocess.run(install, check=False)
-        else:
+        for cmd in steps:
             result = subprocess.run(cmd, check=False)
-        return result.returncode == 0
+            if result.returncode != 0:
+                LOG.warning("Step failed for %s: %s", manager, " ".join(cmd))
+                return False
+        return True
     except Exception as exc:  # pragma: no cover - safeguard
         LOG.error("Auto-install failed: %s", exc)
         return False
@@ -91,7 +93,7 @@ def _has_flag(args: list[str], flag: str) -> bool:
 
 
 def _pick_free_port(start: int, attempts: int = 10) -> int:
-    port = start
+    port = max(1, start)
     for _ in range(attempts):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -116,7 +118,9 @@ def _write_settings_ports(cfg_dir: Path, rpc_port: int, peer_port: int | None) -
     if peer_port:
         data["peer-port"] = peer_port
         data["peer-port-random-on-start"] = False
-    settings_path.write_text(json.dumps(data, indent=2))
+    tmp = settings_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    tmp.replace(settings_path)
 
 
 def _build_daemon_args(config: AppConfig, peer_port: int | None) -> list[str]:
@@ -193,6 +197,7 @@ def maybe_start_daemon(config: AppConfig, wait_seconds: float = 2.5) -> None:
 
     # give daemon time to start
     time.sleep(wait_seconds)
+    _wait_for_rpc(config.rpc.host, chosen_rpc_port, timeout=5.0)
 
 
 def stop_daemon(process_names: Iterable[str] = ("transmission-daemon",)) -> None:
@@ -205,5 +210,21 @@ def stop_daemon(process_names: Iterable[str] = ("transmission-daemon",)) -> None
 
     # small delay to let daemon exit
     time.sleep(0.5)
+
+
+def _wait_for_rpc(host: str, port: int, timeout: float = 5.0, interval: float = 0.25) -> bool:
+    """Poll RPC port until it opens or timeout expires."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(interval)
+            try:
+                sock.connect((host, port))
+                LOG.info("transmission-daemon RPC ready on %s:%s", host, port)
+                return True
+            except OSError:
+                time.sleep(interval)
+    LOG.warning("transmission-daemon RPC did not open on %s:%s within %.1fs", host, port, timeout)
+    return False
 
 

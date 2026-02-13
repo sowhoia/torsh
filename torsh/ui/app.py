@@ -335,14 +335,15 @@ class TorshApp(App):
         )
         try:
             self.query_one("#bindings-bar", Static).update(hint)
-        except Exception:
-            pass
+        except Exception as exc:
+            LOG.debug(f"Failed to update bindings bar: {exc}")
 
     def _update_limit_badge(self) -> None:
         """Update the header speed limit badge."""
         try:
             badge = self.query_one("#limit-badge", Static)
-        except Exception:
+        except Exception as exc:
+            LOG.debug(f"Failed to query limit badge: {exc}")
             return
         limit_down = self._format_limit(self.global_speed_limit_down)
         limit_up = self._format_limit(self.global_speed_limit_up)
@@ -396,8 +397,8 @@ class TorshApp(App):
                     self.connection_ok = True
                     self.notify("🔄 Daemon restarted", severity="warning")
                     connected = True
-                except Exception:
-                    pass
+                except Exception as restart_exc:
+                    LOG.debug(f"Daemon restart failed: {restart_exc}")
         if self.connection_ok != previous_state:
             self._notify_connection_change(self.connection_ok)
         self._connection_state = self.connection_ok
@@ -486,11 +487,11 @@ class TorshApp(App):
     async def _refresh_stats(self) -> None:
         try:
             stats = await self.controller.session_stats()
-            self.download_speed = getattr(stats, "download_speed", 0) / 1024
-            self.upload_speed = getattr(stats, "upload_speed", 0) / 1024
+            self.download_speed = (getattr(stats, "download_speed", 0) or 0) / 1024
+            self.upload_speed = (getattr(stats, "upload_speed", 0) or 0) / 1024
             self._append_speed(self.download_speed, self.upload_speed)
-            self.active_count = getattr(stats, "active_torrent_count", 0)
-            self.paused_count = getattr(stats, "paused_torrent_count", 0)
+            self.active_count = getattr(stats, "active_torrent_count", 0) or 0
+            self.paused_count = getattr(stats, "paused_torrent_count", 0) or 0
             self._update_disk()
             self._render_disk_bar()
             try:
@@ -937,7 +938,14 @@ class TorshApp(App):
             link_path = Path(link).expanduser()
             if link_path.exists():
                 link = str(link_path)
-            subdir = str(Path(subdir).expanduser())
+            
+            # Validate download directory
+            try:
+                subdir = str(Path(subdir).expanduser().resolve())
+            except Exception as e:
+                self.notify(f"⚠️ Invalid path: {e}", severity="warning")
+                return
+            
             try:
                 torrent = await self.controller.add(link, subdir)
                 try:
@@ -948,6 +956,7 @@ class TorshApp(App):
                 self.notify(f"➕ Added: {torrent.name[:30]}", severity="information")
                 await self.refresh_all()
             except Exception as e:
+                LOG.error(f"Failed to add torrent: {e}")
                 self.notify(f"❌ Failed: {e}", severity="error")
 
         def on_dismiss(result: tuple[str, str] | None) -> None:
@@ -1041,25 +1050,36 @@ class TorshApp(App):
         new_dir = await self._show_modal(MoveScreen(torrent.download_dir))
         if new_dir:
             try:
-                await self.controller.move([torrent.id], new_dir, True)
-                self.notify(f"📦 Moved to: {new_dir}", severity="information")
+                # Expand ~ to home directory and validate path is absolute after expansion
+                # (relative paths like "downloads" remain relative, "~/downloads" becomes absolute)
+                expanded_path = Path(new_dir).expanduser()
+                if not expanded_path.is_absolute():
+                    self.notify(f"⚠️ Path must be absolute: {new_dir}", severity="warning")
+                    return
+                await self.controller.move([torrent.id], str(expanded_path), True)
+                self.notify(f"📦 Moved to: {expanded_path}", severity="information")
                 await self.refresh_all()
             except Exception as e:
+                LOG.error(f"Move failed for torrent {torrent.id}: {e}")
                 self.notify(f"❌ Error: {e}", severity="error")
 
     async def action_speed(self) -> None:
         if not await self._check_connection():
             return
-        limits = await self.controller.get_speed_limits()
-        result = await self._show_modal(SpeedScreen(limits["down"], limits["up"]))
-        if result:
-            down, up = result
-            await self.controller.set_speed_limits(down, up)
-            self.global_speed_limit_down = down
-            self.global_speed_limit_up = up
-            self._update_limit_badge()
-            self._update_status_bar()
-            self.notify(f"⚡ Speed: ↓{down} ↑{up} KiB/s", severity="information")
+        try:
+            limits = await self.controller.get_speed_limits()
+            result = await self._show_modal(SpeedScreen(limits["down"], limits["up"]))
+            if result:
+                down, up = result
+                await self.controller.set_speed_limits(down, up)
+                self.global_speed_limit_down = down
+                self.global_speed_limit_up = up
+                self._update_limit_badge()
+                self._update_status_bar()
+                self.notify(f"⚡ Speed: ↓{down} ↑{up} KiB/s", severity="information")
+        except Exception as e:
+            LOG.error(f"Failed to set global speed limits: {e}")
+            self.notify(f"⚠️ Failed to set speed limits: {e}", severity="error")
 
     async def action_torrent_speed(self) -> None:
         if not await self._check_connection():
@@ -1067,12 +1087,16 @@ class TorshApp(App):
         torrent = self._current()
         if not torrent:
             return
-        limits = await self.controller.get_torrent_speed(torrent.id)
-        result = await self._show_modal(SpeedScreen(limits["down"], limits["up"]))
-        if result:
-            down, up = result
-            await self.controller.set_torrent_speed(torrent.id, down, up)
-            self.notify(f"⚡ Torrent speed set", severity="information")
+        try:
+            limits = await self.controller.get_torrent_speed(torrent.id)
+            result = await self._show_modal(SpeedScreen(limits["down"], limits["up"]))
+            if result:
+                down, up = result
+                await self.controller.set_torrent_speed(torrent.id, down, up)
+                self.notify(f"⚡ Torrent speed set", severity="information")
+        except Exception as exc:
+            LOG.error(f"Failed to set torrent speed: {exc}")
+            self.notify(f"⚠️ Failed to set speed: {exc}", severity="error")
 
     async def action_priority(self) -> None:
         if not await self._check_connection():
@@ -1080,14 +1104,19 @@ class TorshApp(App):
         torrent = self._current()
         if not torrent:
             return
-        files = await self.controller.get_files(torrent.id)
-        if not files:
-            return
-        result = await self._show_modal(PriorityScreen(files))
-        if result:
-            high, normal, low = result
-            await self.controller.set_priority(torrent.id, high, normal, low)
-            self.notify("📋 Priorities updated", severity="information")
+        try:
+            files = await self.controller.get_files(torrent.id)
+            if not files:
+                self.notify("⚠️ No files found for this torrent", severity="warning")
+                return
+            result = await self._show_modal(PriorityScreen(files))
+            if result:
+                high, normal, low = result
+                await self.controller.set_priority(torrent.id, high, normal, low)
+                self.notify("📋 Priorities updated", severity="information")
+        except Exception as exc:
+            LOG.error(f"Failed to set file priorities: {exc}")
+            self.notify(f"⚠️ Failed to set priorities: {exc}", severity="error")
 
     async def action_verify(self) -> None:
         """Manual verify for the current torrent."""
@@ -1195,13 +1224,16 @@ class TorshApp(App):
 
         def on_dismiss(result: T | None) -> None:
             self._modal_depth = max(0, self._modal_depth - 1)
-            if self._modal_depth == 0:
-                try:
-                    if self._refresh_timer is None:
-                        self._refresh_timer = self.set_interval(refresh_interval, self.refresh_all)
-                except Exception:
-                    pass
-            callback(result)
+            try:
+                if self._modal_depth == 0:
+                    try:
+                        if self._refresh_timer is None:
+                            self._refresh_timer = self.set_interval(refresh_interval, self.refresh_all)
+                    except Exception as timer_exc:
+                        LOG.debug(f"Failed to restart refresh timer: {timer_exc}")
+                callback(result)
+            except Exception as dismiss_exc:
+                LOG.error(f"Modal dismiss callback error: {dismiss_exc}")
 
         self.push_screen(screen, callback=on_dismiss)
 

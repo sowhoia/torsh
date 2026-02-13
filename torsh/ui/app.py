@@ -1050,7 +1050,8 @@ class TorshApp(App):
         new_dir = await self._show_modal(MoveScreen(torrent.download_dir))
         if new_dir:
             try:
-                # Validate path before attempting move
+                # Expand ~ to home directory and validate path is absolute after expansion
+                # (relative paths like "downloads" remain relative, "~/downloads" becomes absolute)
                 expanded_path = Path(new_dir).expanduser()
                 if not expanded_path.is_absolute():
                     self.notify(f"⚠️ Path must be absolute: {new_dir}", severity="warning")
@@ -1222,10 +1223,8 @@ class TorshApp(App):
         refresh_interval = self.refresh_interval
 
         def on_dismiss(result: T | None) -> None:
-            depth_restored = False
+            self._modal_depth = max(0, self._modal_depth - 1)
             try:
-                self._modal_depth = max(0, self._modal_depth - 1)
-                depth_restored = True
                 if self._modal_depth == 0:
                     try:
                         if self._refresh_timer is None:
@@ -1235,9 +1234,6 @@ class TorshApp(App):
                 callback(result)
             except Exception as dismiss_exc:
                 LOG.error(f"Modal dismiss callback error: {dismiss_exc}")
-                # Ensure modal depth is restored if it wasn't already
-                if not depth_restored:
-                    self._modal_depth = max(0, self._modal_depth - 1)
 
         self.push_screen(screen, callback=on_dismiss)
 

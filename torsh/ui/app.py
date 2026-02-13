@@ -1222,8 +1222,10 @@ class TorshApp(App):
         refresh_interval = self.refresh_interval
 
         def on_dismiss(result: T | None) -> None:
+            depth_restored = False
             try:
                 self._modal_depth = max(0, self._modal_depth - 1)
+                depth_restored = True
                 if self._modal_depth == 0:
                     try:
                         if self._refresh_timer is None:
@@ -1233,8 +1235,9 @@ class TorshApp(App):
                 callback(result)
             except Exception as dismiss_exc:
                 LOG.error(f"Modal dismiss callback error: {dismiss_exc}")
-                # Ensure modal depth is restored even on error
-                self._modal_depth = max(0, self._modal_depth - 1)
+                # Ensure modal depth is restored if it wasn't already
+                if not depth_restored:
+                    self._modal_depth = max(0, self._modal_depth - 1)
 
         self.push_screen(screen, callback=on_dismiss)
 

@@ -192,17 +192,14 @@ def maybe_start_daemon(config: AppConfig, wait_seconds: float = 2.5) -> None:
             close_fds=True,
             start_new_session=True,
         )
-        # Don't close log_handle here - daemon owns it now
-        log_handle = None  # Prevent cleanup in finally
+        # Daemon now owns the file handle; don't close it
+        log_handle = None
     except Exception as exc:  # pragma: no cover - safeguard
         LOG.error("Failed to start transmission-daemon: %s", exc)
+        # Close handle only if Popen failed
         if log_handle:
             log_handle.close()
         return
-    finally:
-        # Only close if Popen failed (log_handle still set)
-        if log_handle:
-            log_handle.close()
 
     # give daemon time to start
     time.sleep(wait_seconds)

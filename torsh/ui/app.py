@@ -938,7 +938,14 @@ class TorshApp(App):
             link_path = Path(link).expanduser()
             if link_path.exists():
                 link = str(link_path)
-            subdir = str(Path(subdir).expanduser())
+            
+            # Validate download directory
+            try:
+                subdir = str(Path(subdir).expanduser().resolve())
+            except Exception as e:
+                self.notify(f"⚠️ Invalid path: {e}", severity="warning")
+                return
+            
             try:
                 torrent = await self.controller.add(link, subdir)
                 try:
@@ -949,6 +956,7 @@ class TorshApp(App):
                 self.notify(f"➕ Added: {torrent.name[:30]}", severity="information")
                 await self.refresh_all()
             except Exception as e:
+                LOG.error(f"Failed to add torrent: {e}")
                 self.notify(f"❌ Failed: {e}", severity="error")
 
         def on_dismiss(result: tuple[str, str] | None) -> None:
@@ -1042,25 +1050,35 @@ class TorshApp(App):
         new_dir = await self._show_modal(MoveScreen(torrent.download_dir))
         if new_dir:
             try:
-                await self.controller.move([torrent.id], new_dir, True)
-                self.notify(f"📦 Moved to: {new_dir}", severity="information")
+                # Validate path before attempting move
+                expanded_path = Path(new_dir).expanduser()
+                if not expanded_path.is_absolute():
+                    self.notify(f"⚠️ Path must be absolute: {new_dir}", severity="warning")
+                    return
+                await self.controller.move([torrent.id], str(expanded_path), True)
+                self.notify(f"📦 Moved to: {expanded_path}", severity="information")
                 await self.refresh_all()
             except Exception as e:
+                LOG.error(f"Move failed for torrent {torrent.id}: {e}")
                 self.notify(f"❌ Error: {e}", severity="error")
 
     async def action_speed(self) -> None:
         if not await self._check_connection():
             return
-        limits = await self.controller.get_speed_limits()
-        result = await self._show_modal(SpeedScreen(limits["down"], limits["up"]))
-        if result:
-            down, up = result
-            await self.controller.set_speed_limits(down, up)
-            self.global_speed_limit_down = down
-            self.global_speed_limit_up = up
-            self._update_limit_badge()
-            self._update_status_bar()
-            self.notify(f"⚡ Speed: ↓{down} ↑{up} KiB/s", severity="information")
+        try:
+            limits = await self.controller.get_speed_limits()
+            result = await self._show_modal(SpeedScreen(limits["down"], limits["up"]))
+            if result:
+                down, up = result
+                await self.controller.set_speed_limits(down, up)
+                self.global_speed_limit_down = down
+                self.global_speed_limit_up = up
+                self._update_limit_badge()
+                self._update_status_bar()
+                self.notify(f"⚡ Speed: ↓{down} ↑{up} KiB/s", severity="information")
+        except Exception as e:
+            LOG.error(f"Failed to set global speed limits: {e}")
+            self.notify(f"⚠️ Failed to set speed limits: {e}", severity="error")
 
     async def action_torrent_speed(self) -> None:
         if not await self._check_connection():

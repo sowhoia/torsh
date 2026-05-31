@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from rich.progress_bar import ProgressBar
 from rich.text import Text
@@ -47,6 +47,7 @@ from .modals import (
 
 LOG = get_logger(__name__)
 
+T = TypeVar("T")
 
 
 # =============================================================================
@@ -58,18 +59,25 @@ def format_percent(value: float) -> str:
     return f"{value:5.1f}%"
 
 
-def styled_status(status: str) -> Text:
-    """Return a styled Text object for torrent status."""
-    styles = {
-        "downloading": ("⬇", "bold green"),
-        "seeding": ("⬆", "bold blue"),
-        "stopped": ("⏸", "dim"),
-        "paused": ("⏸", "dim yellow"),
-        "checking": ("⟳", "magenta"),
-        "queued": ("⏳", "cyan"),
-        "error": ("⚠", "bold red"),
-    }
-    icon, style = styles.get(status.lower(), ("?", "default"))
+_STATUS_STYLES: dict[str, tuple[str, str]] = {
+    "downloading": ("⬇", "bold green"),
+    "seeding": ("⬆", "bold blue"),
+    "stopped": ("⏸", "dim"),
+    "paused": ("⏸", "dim yellow"),
+    "checking": ("⟳", "magenta"),
+    "check pending": ("⟳", "dim magenta"),
+    "download pending": ("⏳", "cyan"),
+    "seed pending": ("⏳", "dim cyan"),
+    "queued": ("⏳", "cyan"),
+    "error": ("⚠", "bold red"),
+}
+
+
+def styled_status(status: str, error: bool = False) -> Text:
+    """Return a styled :class:`Text` for a torrent's status."""
+    if error:
+        return Text("⚠ Error", style="bold red")
+    icon, style = _STATUS_STYLES.get(status.lower(), ("•", "default"))
     return Text(f"{icon} {status.title()}", style=style)
 
 
@@ -366,8 +374,8 @@ class TorshApp(App):
         self._persist_ui()
 
     async def refresh_all(self) -> None:
-        # Пропускаем автообновление, пока открыт модальный экран,
-        # чтобы не дёргать недоступные виджеты и не сбивать ввод.
+        # Skip auto-refresh while a modal is open so we never touch detached
+        # widgets or steal focus from an input the user is typing into.
         if self._modal_depth:
             return
         if not await self._check_connection():
@@ -426,15 +434,14 @@ class TorshApp(App):
     async def _auto_retry_failed(self, torrents: list[TorrentView]) -> None:
         """Auto-retry torrents that are in error state."""
         for t in torrents:
-            status = t.status.lower()
-            if "error" in status and t.percent_done < 100.0:
+            if t.error and t.percent_done < 100.0:
                 attempts = self._auto_retry_attempts.get(t.id, 0)
                 if attempts >= 3:
                     continue
                 self._auto_retry_attempts[t.id] = attempts + 1
                 try:
                     await self.controller.start([t.id])
-                    self.notify(f"🔁 Повторная попытка #{attempts + 1}: {t.name[:30]}", severity="warning")
+                    self.notify(f"🔁 Retry #{attempts + 1}: {t.name[:30]}", severity="warning")
                 except Exception as exc:
                     LOG.debug(f"Auto-retry failed for {t.id}: {exc}")
             else:
@@ -456,7 +463,7 @@ class TorshApp(App):
             await self.controller.start(to_start)
             for tid in to_start:
                 self._auto_started.add(tid)
-            self.notify(f"▶ Автостарт {len(to_start)} торрентов", severity="information")
+            self.notify(f"▶ Auto-started {len(to_start)} torrent(s)", severity="information")
         except Exception as exc:
             LOG.debug(f"Auto-resume failed: {exc}")
 
@@ -520,7 +527,6 @@ class TorshApp(App):
                 self._row_cache.pop(int(row.key.value), None)
 
         row_key_map = {row.key.value: row.key for row in table.ordered_rows}
-        row_obj_map = {row.key.value: row for row in table.ordered_rows}
 
         for torrent in data:
             cells, snapshot = self._torrent_cells(torrent)
@@ -535,7 +541,7 @@ class TorshApp(App):
                     self._update_torrent_row(table, row_key, cells, cached, snapshot)
             self._row_cache[torrent.id] = snapshot
 
-        self._sync_table_order(table, desired_keys, row_obj_map)
+        self._apply_row_order(table, desired_keys)
 
         if self.selected_id is not None:
             idx = self._find_row_index(self.selected_id, data)
@@ -560,8 +566,8 @@ class TorshApp(App):
             complete_style="bold cyan",
             finished_style="magenta",
         )
-        down_style = "bold green" if torrent.rate_down != "0 B/s" else "dim"
-        up_style = "bold blue" if torrent.rate_up != "0 B/s" else "dim"
+        down_style = "dim" if torrent.rate_down.startswith("0 ") else "bold green"
+        up_style = "dim" if torrent.rate_up.startswith("0 ") else "bold blue"
 
         cells = (
             Text(str(torrent.id), justify="right"),
@@ -571,7 +577,7 @@ class TorshApp(App):
             Text(torrent.rate_down, style=down_style, justify="right"),
             Text(torrent.rate_up, style=up_style, justify="right"),
             styled_ratio(torrent.ratio),
-            styled_status(torrent.status),
+            styled_status(torrent.status, torrent.error),
         )
         snapshot = {
             "name": torrent.name,
@@ -581,6 +587,7 @@ class TorshApp(App):
             "rate_up": torrent.rate_up,
             "ratio": round(torrent.ratio, 3),
             "status": torrent.status,
+            "error": torrent.error,
         }
         return cells, snapshot
 
@@ -608,27 +615,27 @@ class TorshApp(App):
             table.update_cell(row_key, self._table_columns["up"], cells[5])
         if changed("ratio"):
             table.update_cell(row_key, self._table_columns["ratio"], cells[6])
-        if changed("status"):
+        if changed("status") or changed("error"):
             table.update_cell(row_key, self._table_columns["status"], cells[7])
 
-    def _sync_table_order(
-        self,
-        table: DataTable,
-        desired_keys: list[str],
-        row_obj_map: dict[str, Any],
-    ) -> None:
-        """Reorder rows to match sorted data without nuking the table."""
+    def _apply_row_order(self, table: DataTable, desired_keys: list[str], *, column: str = "id") -> None:
+        """Reorder rows to match ``desired_keys`` via the public sort API.
+
+        ``DataTable.ordered_rows`` is read-only, so we drive ordering through
+        ``DataTable.sort`` keyed on a stable column whose plain text equals the
+        row key (the ID/index column for every table we render).
+        """
+        if not desired_keys:
+            return
+        positions = {key: idx for idx, key in enumerate(desired_keys)}
+        fallback = len(positions)
         try:
-            ordered_rows = []
-            for key in desired_keys:
-                row_obj = row_obj_map.get(key)
-                if row_obj is not None:
-                    ordered_rows.append(row_obj)
-            if ordered_rows and ordered_rows != table.ordered_rows:
-                table.ordered_rows[:] = ordered_rows
-                table.refresh(layout=False)
+            table.sort(
+                column,
+                key=lambda cell: positions.get(getattr(cell, "plain", str(cell)), fallback),
+            )
         except Exception as exc:
-            LOG.debug(f"Row reorder skipped: {exc}")
+            LOG.debug("Row reorder skipped: %s", exc)
 
     def _find_row_index(self, torrent_id: int, data: list[TorrentView]) -> int | None:
         for idx, t in enumerate(data):
@@ -650,12 +657,13 @@ class TorshApp(App):
                 self._trackers_torrent_id = torrent.id
                 self._trackers_cache.clear()
                 self.query_one("#trackers-table", DataTable).clear()
+            status_label = styled_status(torrent.status, torrent.error).plain
             md = f"""
 ## {torrent.name}
 
 | Property | Value |
 |----------|-------|
-| Status | {styled_status(torrent.status).plain} |
+| Status | {status_label} |
 | Progress | {torrent.percent_done:.1f}% |
 | Size | {torrent.size} |
 | Ratio | {torrent.ratio:.2f} |
@@ -663,6 +671,8 @@ class TorshApp(App):
 | Peers | {torrent.peers} (S:{torrent.seeders}/L:{torrent.leechers}) |
 | Path | `{torrent.download_dir}` |
 """
+            if torrent.error and torrent.error_string:
+                md += f"\n> ⚠️ **Error:** {torrent.error_string}\n"
             details.update(md)
             asyncio.create_task(self._update_files_tab(torrent.id))
             asyncio.create_task(self._update_trackers_tab(torrent.id))
@@ -700,7 +710,6 @@ class TorshApp(App):
                     self._files_cache.pop(int(row.key.value), None)
 
             row_key_map = {row.key.value: row.key for row in ft.ordered_rows}
-            row_obj_map = {row.key.value: row for row in ft.ordered_rows}
 
             for idx, f in sorted(files.items()):
                 size = humanize.naturalsize(f.get("length", 0), binary=True)
@@ -739,9 +748,6 @@ class TorshApp(App):
                         if cached is None or cached.get("priority") != snapshot["priority"]:
                             ft.update_cell(row_key, self._files_columns["priority"], cells[3])
                 self._files_cache[idx] = snapshot
-
-            # Keep original ordering based on file index
-            self._sync_table_order(ft, desired_keys, row_obj_map)
         except Exception as exc:
             LOG.debug(f"Files tab update skipped: {exc}")
 
@@ -768,7 +774,6 @@ class TorshApp(App):
                     self._trackers_cache.pop(row.key.value, None)
 
             row_key_map = {row.key.value: row.key for row in tt.ordered_rows}
-            row_obj_map = {row.key.value: row for row in tt.ordered_rows}
 
             for idx, tracker in enumerate(trackers):
                 host = tracker.get("host", "unknown")
@@ -818,8 +823,6 @@ class TorshApp(App):
                         if cached is None or cached.get("leechers") != snapshot["leechers"]:
                             tt.update_cell(row_key, self._trackers_columns["leechers"], cells[4])
                 self._trackers_cache[key_str] = snapshot
-
-            self._sync_table_order(tt, desired_keys, row_obj_map)
         except Exception as exc:
             LOG.debug(f"Trackers tab update skipped: {exc}")
 
@@ -872,7 +875,7 @@ class TorshApp(App):
                 if t.status not in ("stopped", "paused"):
                     continue
             elif self.status_filter_value == "error":
-                if "error" not in t.status.lower():
+                if not t.error:
                     continue
             if self.progress_filter_value == "done":
                 if t.percent_done < 99.9:

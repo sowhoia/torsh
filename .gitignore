@@ -9,25 +9,24 @@ __pycache__/
 venv/
 .env
 
-# Poetry / pip artifacts
+# Build / packaging artifacts
 dist/
 build/
 *.egg-info/
-.pytest_cache/
+*.deb
+*.rpm
 
-# Textual / runtime state
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Runtime state
 .torsh/
+
+# Agent tooling
+.claude/
 
 # OS junk
 .DS_Store
 Thumbs.db
-
-# Нейронные сети
-    .claude/
-
-# Local tests (не коммитим)
-tests/
-
-# Ignore own .gitignore if desired
-.gitignore
-.gitignore

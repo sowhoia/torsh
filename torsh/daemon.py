@@ -180,19 +180,25 @@ def maybe_start_daemon(config: AppConfig, wait_seconds: float = 2.5) -> None:
     args = _build_daemon_args(config, chosen_peer_port)
     log_file = config.daemon.log_path
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    log = log_file.open("a", encoding="utf-8")
 
     LOG.info("Starting transmission-daemon: %s", " ".join(args))
+    log_handle = None
     try:
+        log_handle = log_file.open("a", encoding="utf-8")
         subprocess.Popen(
             args,
-            stdout=log,
-            stderr=log,
+            stdout=log_handle,
+            stderr=log_handle,
             close_fds=True,
             start_new_session=True,
         )
+        # Daemon now owns the file handle; don't close it
+        log_handle = None
     except Exception as exc:  # pragma: no cover - safeguard
         LOG.error("Failed to start transmission-daemon: %s", exc)
+        # Close handle only if Popen failed
+        if log_handle:
+            log_handle.close()
         return
 
     # give daemon time to start

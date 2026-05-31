@@ -51,10 +51,10 @@ def _safe_path(value: Any, default: Path) -> Path:
 @dataclass
 class RpcConfig:
     host: str = os.environ.get("TORSH_HOST", "localhost")
-    port: int = int(os.environ.get("TORSH_PORT", "9091"))
+    port: int = field(default_factory=lambda: _safe_int(os.environ.get("TORSH_PORT", "9091"), 9091, minimum=1, maximum=65535))
     username: str | None = os.environ.get("TORSH_USER") or None
     password: str | None = os.environ.get("TORSH_PASSWORD") or None
-    timeout: float = float(os.environ.get("TORSH_TIMEOUT", "10.0"))
+    timeout: float = field(default_factory=lambda: _safe_float(os.environ.get("TORSH_TIMEOUT", "10.0"), 10.0))
 
     def normalize(self) -> "RpcConfig":
         return RpcConfig(

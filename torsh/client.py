@@ -66,6 +66,9 @@ class TransmissionController:
             try:
                 method = getattr(self.client, method_name)
                 return await self._to_thread(method, *args, **kwargs)
+            except (KeyboardInterrupt, SystemExit):
+                # Re-raise graceful shutdown signals immediately
+                raise
             except TransmissionError as exc:
                 last_error = exc
                 self.reset()

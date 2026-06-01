@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "torsh"
-version = "0.1.1"
-description = "Transmission TUI client"
+version = "0.2.0"
+description = "A beautiful, modern Transmission TUI client for the terminal"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "torsh authors" }]
@@ -26,5 +26,9 @@ exclude = ["tests*"]
 
 [tool.setuptools.package-data]
 "torsh.ui" = ["styles.tcss"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 

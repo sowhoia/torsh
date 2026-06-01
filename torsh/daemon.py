@@ -218,6 +218,17 @@ def stop_daemon(process_names: Iterable[str] = ("transmission-daemon",)) -> None
     time.sleep(0.5)
 
 
+def rpc_reachable(host: str, port: int, timeout: float = 1.5) -> bool:
+    """Return ``True`` if a TCP connection to the RPC port succeeds."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        try:
+            sock.connect((host, port))
+            return True
+        except OSError:
+            return False
+
+
 def _wait_for_rpc(host: str, port: int, timeout: float = 5.0, interval: float = 0.25) -> bool:
     """Poll RPC port until it opens or timeout expires."""
     deadline = time.time() + timeout

@@ -42,7 +42,7 @@ Screen {
     height: 5;
     dock: top;
     background: $torsh-panel;
-    border-bottom: double $torsh-border;
+    border-bottom: solid $torsh-border;
     padding: 0 2;
     layout: horizontal;
     align-vertical: middle;
@@ -57,7 +57,7 @@ Screen {
     text-style: bold italic;
     color: $torsh-secondary;
     background: $torsh-bg;
-    border: double $torsh-primary;
+    border: round $torsh-primary;
     padding: 0 1;
     height: 3;
 }
@@ -106,7 +106,7 @@ Screen {
 #limit-badge {
     background: $torsh-bg;
     color: $torsh-success;
-    border: double $torsh-secondary;
+    border: round $torsh-secondary;
     text-style: bold;
     padding: 0 1;
     min-width: 16;
@@ -140,7 +140,7 @@ Sparkline.-upload {
 #torrent-list-container {
     width: 65%;
     height: 100%;
-    border-right: double $torsh-border;
+    border-right: solid $torsh-border;
     background: $torsh-bg;
 }
 
@@ -149,7 +149,7 @@ Sparkline.-upload {
     height: 100%;
     background: $torsh-panel;
     layout: vertical;
-    border-left: double $torsh-border; 
+    border-left: solid $torsh-border; 
 }
 
 /* ==========================================================================
@@ -167,7 +167,7 @@ DataTable > .datatable--header {
     background: $torsh-panel;
     color: $torsh-secondary;
     text-style: bold reverse;
-    border-bottom: double $torsh-primary;
+    border-bottom: heavy $torsh-primary;
 }
 
 DataTable > .datatable--cursor {
@@ -266,7 +266,7 @@ HelpScreen {
     min-height: 10;
     max-height: 80%;
     background: $torsh-panel;
-    border: double $torsh-secondary;
+    border: round $torsh-secondary;
     padding: 1 2;
     layout: vertical;
 }
@@ -278,7 +278,7 @@ HelpScreen {
     text-align: center;
     padding: 1 0;
     margin-bottom: 2;
-    border: double $torsh-primary;
+    border: round $torsh-primary;
     width: 100%;
 }
 
@@ -307,7 +307,7 @@ Input {
 }
 
 Input:focus {
-    border: double $torsh-secondary;
+    border: round $torsh-secondary;
     background: $torsh-zebra-even;
 }
 
@@ -364,7 +364,7 @@ SelectionList {
 Footer {
     background: $torsh-panel;
     color: $torsh-fg-dim;
-    border-top: double $torsh-border;
+    border-top: solid $torsh-border;
 }
 
 /* ==========================================================================

@@ -14,7 +14,7 @@ LOG = get_logger(__name__)
 
 
 class BaseModalScreen(ModalScreen[T]):
-    """Базовый модальный экран с обработкой Escape."""
+    """Base modal screen that dismisses on Escape."""
 
     BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
 
@@ -23,7 +23,7 @@ class BaseModalScreen(ModalScreen[T]):
 
 
 class AddTorrentScreen(BaseModalScreen[tuple[str, str] | None]):
-    """Диалог добавления торрента."""
+    """Prompt for a magnet link / .torrent path and a destination directory."""
 
     def __init__(self, download_dir: str) -> None:
         super().__init__()
@@ -69,7 +69,7 @@ class AddTorrentScreen(BaseModalScreen[tuple[str, str] | None]):
 
 
 class ConfirmScreen(BaseModalScreen[bool]):
-    """Да/Нет подтверждение."""
+    """Yes/No confirmation dialog."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", priority=True),
@@ -110,7 +110,7 @@ class ConfirmScreen(BaseModalScreen[bool]):
 
 
 class MoveScreen(BaseModalScreen[str | None]):
-    """Перенос данных торрента."""
+    """Move a torrent's data to a new location."""
 
     def __init__(self, current_dir: str) -> None:
         super().__init__()
@@ -134,7 +134,7 @@ class MoveScreen(BaseModalScreen[str | None]):
 
 
 class SpeedScreen(BaseModalScreen[tuple[int, int] | None]):
-    """Установка лимитов скорости."""
+    """Set download/upload speed limits (KiB/s)."""
 
     PRESETS = {
         "preset_off": (0, 0),
@@ -177,7 +177,7 @@ class SpeedScreen(BaseModalScreen[tuple[int, int] | None]):
 
 
 class PriorityScreen(BaseModalScreen[tuple[list[int], list[int], list[int]] | None]):
-    """Установка приоритетов файлов."""
+    """Choose per-file download priorities (high / normal / low)."""
 
     def __init__(self, files: dict[int, dict[str, Any]]) -> None:
         super().__init__()
@@ -208,16 +208,16 @@ class PriorityScreen(BaseModalScreen[tuple[list[int], list[int], list[int]] | No
         if event.button.id != "ok":
             self.dismiss(None)
             return
-        high_list = self.query_one("#high", SelectionList)
-        low_list = self.query_one("#low", SelectionList)
-        high = [int(v) for v in high_list.selected_values]
-        low = [int(v) for v in low_list.selected_values if v not in high_list.selected_values]
+        high_selected = set(self.query_one("#high", SelectionList).selected)
+        low_selected = set(self.query_one("#low", SelectionList).selected)
+        high = [int(v) for v in high_selected]
+        low = [int(v) for v in low_selected if v not in high_selected]
         normal = [int(k) for k in self.files.keys() if k not in high and k not in low]
         self.dismiss((high, normal, low))
 
 
 class FilterScreen(BaseModalScreen[str | None]):
-    """Фильтр по имени."""
+    """Filter the torrent list by name."""
 
     def __init__(self, current_filter: str) -> None:
         super().__init__()
@@ -242,7 +242,7 @@ class FilterScreen(BaseModalScreen[str | None]):
 
 
 class HelpScreen(BaseModalScreen[None]):
-    """Справка по горячим клавишам."""
+    """Keyboard shortcut reference."""
 
     HELP_TEXT = """
 ## Navigation

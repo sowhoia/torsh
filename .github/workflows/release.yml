@@ -39,29 +39,23 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    environment: release
+    # PyPI Trusted Publishing (OIDC) — no API token/secret required.
+    # One-time setup: add a trusted publisher on PyPI for this repo,
+    # workflow file "release.yml" and environment "release".
+    environment:
+      name: release
+      url: https://pypi.org/project/torsh/
     permissions:
-      contents: read
       id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Download dist
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
 
-      - name: Upload to PyPI
-        uses: pypa/gh-action-pypi-publish@v1.8.14
-        with:
-          password: ${{ secrets.PYPI_TOKEN }}
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
 
   packages:
     needs: build

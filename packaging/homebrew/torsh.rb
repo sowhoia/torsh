@@ -1,8 +1,9 @@
 class Torsh < Formula
-  desc "Transmission TUI client"
-  homepage "https://example.com/torsh"
-  version "0.1.0"
-  # TODO: replace with real PyPI sdist url and sha256 after publish
+  desc "Modern Transmission TUI client for the terminal"
+  homepage "https://github.com/sowhoia/torsh"
+  version "0.2.0"
+  # After publishing to PyPI, set sha256 to the sdist hash:
+  #   curl -sL https://pypi.org/pypi/torsh/#{version}/json | jq -r '.urls[] | select(.packagetype=="sdist") | .digests.sha256'
   url "https://files.pythonhosted.org/packages/source/t/torsh/torsh-#{version}.tar.gz"
   sha256 "<fill-me>"
 

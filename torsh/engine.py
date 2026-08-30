@@ -317,7 +317,13 @@ class Engine:
     def apply_config(self, config: Config) -> None:
         """Apply a freshly loaded config to the live session."""
         with self._lock:
+            ratio_changed = config.limits.ratio != self.config.limits.ratio
             self.config = config
+            if ratio_changed:
+                # A new ratio limit is a new policy: torrents the old cap
+                # handled become eligible again. Unrelated edits must not
+                # punish a manual resume, hence the change check.
+                self._ratio_handled.clear()
         session = self._require_session()
         pack = self._settings_pack()
         # listen_interfaces changes would re-bind sockets mid-flight; skip it.
@@ -442,8 +448,11 @@ class Engine:
     def resume(self, hashes: Iterable[str]) -> int:
         count = 0
         for info_hash, handle in self._resolve_pairs(hashes):
-            with self._lock:
-                self._ratio_handled.discard(info_hash)
+            # Deliberately no _ratio_handled bookkeeping here: discarding the
+            # mark would let the next state_update (~1 Hz) re-pause a torrent
+            # the user just asked to keep seeding. A manual resume wins over
+            # the ratio cap for the rest of the session; changing the limit
+            # re-arms enforcement (apply_config clears the set).
             handle.set_flags(lt.torrent_flags.auto_managed)
             handle.resume()
             self._refresh_status(info_hash, handle)
@@ -892,7 +901,11 @@ class Engine:
         ratio_limit = self.config.limits.ratio
         with self._lock:
             for st in alert.status:
-                self._status[_hash_str(st.info_hashes)] = st
+                h = _hash_str(st.info_hashes)
+                if h in self._handles:
+                    # A status batched just before remove_torrent() would
+                    # otherwise resurrect a ghost row (same guard as get()).
+                    self._status[h] = st
         if ratio_limit > 0:
             self._enforce_ratio(alert.status, ratio_limit)
 

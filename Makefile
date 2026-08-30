@@ -37,8 +37,12 @@ dist:                           ## build sdist + wheel into dist/
 	python3 -m pip install --upgrade build
 	python3 -m build
 
+brew-sha:                       ## print the published sdist sha256, for packaging/homebrew/torsh.rb
+	curl -sL https://pypi.org/pypi/torsh/json | \
+		$(PY) -c "import json,sys; d=json.load(sys.stdin); print(next(u['digests']['sha256'] for u in d['urls'] if u['packagetype']=='sdist' and u['filename']==f'torsh-{d[\"info\"][\"version\"]}.tar.gz'))"
+
 brew:
-	@echo "Update url/sha256 in packaging/homebrew/torsh.rb before running."
+	@echo "Update url/sha256 in packaging/homebrew/torsh.rb before running (make brew-sha)."
 	brew install --build-from-source ./packaging/homebrew/torsh.rb
 
 clean:

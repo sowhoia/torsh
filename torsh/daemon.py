@@ -311,23 +311,36 @@ async def serve(config: config_mod.Config) -> None:
         else:
             LOG.warning("stopping with %d request(s) still in flight", service.connections)
         await asyncio.to_thread(service.engine.stop)
-        _cleanup_files()
+        if server is not None:
+            # Only the daemon that bound the endpoint may sweep it: the loser
+            # of an autostart race (its own probe passed, then the bind found
+            # the winner) exits here too, and unlinking would sabotage the
+            # winner's socket and pid file.
+            _cleanup_files()
         LOG.info("bye")
 
 
 def _remove_stale_socket(sock_path: Path) -> None:
     if not sock_path.exists():
         return
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    probe.settimeout(1.0)
-    try:
-        probe.connect(str(sock_path))
-    except OSError:
-        sock_path.unlink(missing_ok=True)
-    else:
-        raise SystemExit("torsh daemon is already running")
-    finally:
-        probe.close()
+    # A refused connect usually means a dead daemon — but it is also what a
+    # peer looks like in the brief window between creating the socket file
+    # and listen(). Probe a few times before concluding it is stale: deleting
+    # a *starting* daemon's socket would orphan it mid-autostart.
+    for attempt in range(3):
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(1.0)
+        try:
+            probe.connect(str(sock_path))
+        except OSError:
+            if attempt == 2:
+                sock_path.unlink(missing_ok=True)
+                return
+            time.sleep(0.25)
+        else:
+            raise SystemExit("torsh daemon is already running")
+        finally:
+            probe.close()
 
 
 def _cleanup_files() -> None:
@@ -384,6 +397,9 @@ def stop_daemon(timeout: float = 20.0) -> bool:
     # Still answering long after a clean request: the event loop is wedged
     # (a disk stuck mid resume-sweep, say). SIGTERM trips the very same
     # shutdown path, so resume data is still saved — it only skips the reply.
+    # (POSIX only: Windows maps os.kill to TerminateProcess, which skips the
+    # handler and loses the last resume interval; supported installs there
+    # run under WSL.)
     pid = running_pid()
     if pid is None:
         return False
@@ -399,13 +415,14 @@ def stop_daemon(timeout: float = 20.0) -> bool:
 def _settled(timeout: float) -> bool:
     """Wait for the daemon to be gone *and* tidy; sweep after it if it isn't.
 
-    Both halves matter: `torsh daemon restart` must not hand the new daemon
-    a socket the old one is about to unlink.  A daemon that died without
-    cleaning up (SIGKILL, power cut) gets swept here instead.
+    All three conditions matter: `torsh daemon restart` must not hand the new
+    daemon a socket the old one is about to unlink, and the dying daemon's
+    own sweep must not delete the *replacement's* pid file.  A daemon that
+    died without cleaning up (SIGKILL, power cut) gets swept here instead.
     """
     deadline = time.time() + timeout
     while True:
-        if not ipc.daemon_running() and _endpoint_gone():
+        if not ipc.daemon_running() and _files_gone():
             return True
         if time.time() >= deadline:
             break
@@ -414,6 +431,17 @@ def _settled(timeout: float) -> bool:
         _cleanup_files()
         return True
     return False
+
+
+def _files_gone() -> bool:
+    """Every runtime file the daemon owns is off disk.
+
+    The pid file is the load-bearing half: Python 3.13's asyncio unlinks the
+    unix socket the moment ``Server.close()`` runs, but the daemon only sweeps
+    the pid file *after* saving engine state — so a vanished socket no longer
+    means a finished daemon.
+    """
+    return not paths.pid_file().exists() and _endpoint_gone()
 
 
 def _endpoint_gone() -> bool:

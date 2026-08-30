@@ -562,7 +562,10 @@ class TorshApp(App):
             self._row_snapshot[t["hash"]] = fingerprint
 
     def _cursor_hash(self) -> str | None:
-        table = self.query_one("#torrents", DataTable)
+        try:
+            table = self.query_one("#torrents", DataTable)
+        except NoMatches:  # a timer can land before compose() or after teardown
+            return None
         if not table.row_count:
             return None
         try:
@@ -600,11 +603,17 @@ class TorshApp(App):
     # ------------------------------------------------------------------
 
     async def _refresh_details(self) -> None:
-        current = self._current()
-        if current is None:
-            self.query_one("#overview-body", Static).update("[dim]no torrent under the cursor[/]")
+        try:
+            current = self._current()
+            if current is None:
+                self.query_one("#overview-body", Static).update("[dim]no torrent under the cursor[/]")
+                return
+            tabs = self.query_one(TabbedContent)
+        except NoMatches:
+            # The details timer scheduled on cursor move can land while the
+            # DOM is mounting or being torn down — a vanished widget just
+            # means "stop painting" (same contract as refresh_data).
             return
-        tabs = self.query_one(TabbedContent)
         try:
             if tabs.active == "overview":
                 detail = await self.client.call("get", hash=current["hash"])

@@ -12,6 +12,7 @@ import stat
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import libtorrent as lt
 import pytest
@@ -569,6 +570,86 @@ def test_apply_config_reaches_the_live_session(engine, tmp_path):
     # would drop every connected peer for a setting nobody asked to take
     # effect right now.
     assert engine.listen_port() == port_before
+
+
+class _FakeStatus:
+    """Just enough of a torrent_status for _enforce_ratio and the caches."""
+
+    def __init__(self, info_hash: str, *, upload: int, download: int, paused: bool):
+        self.info_hashes = SimpleNamespace(get_best=lambda: info_hash)
+        self.all_time_upload = upload
+        self.all_time_download = download
+        self.total_done = download
+        self.is_finished = True
+        self.paused = paused
+        self.name = "payload.bin"
+
+
+def _seeded_torrent(engine, tmp_path: Path) -> str:
+    src = tmp_path / "src"
+    src.mkdir()
+    _, meta = make_torrent(src)
+    (tmp_path / "t.torrent").write_bytes(meta)
+    return engine.add(str(tmp_path / "t.torrent"), paused=True)["hash"]
+
+
+def test_manual_resume_is_not_undone_by_the_ratio_cap(engine, tmp_path):
+    """`torsh resume` on a ratio-paused torrent must stick.
+
+    resume() leaves the handled-mark alone: discarding it would let the very
+    next state_update (~1 Hz) re-pause what the user just asked to keep
+    seeding — "a manual resume wins over us", as _enforce_ratio promises.
+    """
+    info_hash = _seeded_torrent(engine, tmp_path)
+    st = _FakeStatus(info_hash, upload=400, download=100, paused=False)
+
+    engine._enforce_ratio([st], limit=2.0)
+    wait_for(lambda: engine.get(info_hash)["status"] == "paused")
+
+    assert engine.resume([info_hash]) == 1
+    wait_for(lambda: engine.get(info_hash)["status"] != "paused")
+
+    engine._enforce_ratio([st], limit=2.0)  # the very next tick
+    time.sleep(0.3)
+    assert engine.get(info_hash)["status"] != "paused", "ratio cap undid a manual resume"
+
+
+def test_a_new_ratio_limit_re_arms_enforcement(engine, tmp_path):
+    """Changing limits.ratio is a new policy; an unrelated edit is not."""
+    info_hash = _seeded_torrent(engine, tmp_path)
+    st = _FakeStatus(info_hash, upload=400, download=100, paused=False)
+
+    engine._enforce_ratio([st], limit=2.0)
+    wait_for(lambda: engine.get(info_hash)["status"] == "paused")
+
+    unrelated = quiet_config(tmp_path)
+    unrelated.limits.download = 7 * 1024**2
+    engine.apply_config(unrelated)
+    assert engine.resume([info_hash]) == 1
+    engine._enforce_ratio([st], limit=2.0)
+    time.sleep(0.3)
+    assert engine.get(info_hash)["status"] != "paused", "an unrelated edit must not re-arm the cap"
+
+    fresh = quiet_config(tmp_path)
+    fresh.limits.ratio = 2.0
+    engine.apply_config(fresh)  # the ratio itself changed → eligible again
+    engine._enforce_ratio([st], limit=2.0)
+    wait_for(lambda: engine.get(info_hash)["status"] == "paused")
+
+
+def test_state_update_does_not_resurrect_a_removed_torrent(engine, tmp_path):
+    """A status batched just before remove_torrent() must not re-insert a
+    ghost row that `ls` would show and `rm` could never reach."""
+    info_hash = _seeded_torrent(engine, tmp_path)
+    assert engine.remove([info_hash]) == 1
+
+    ghost = _FakeStatus(info_hash, upload=0, download=0, paused=False)
+    alert = SimpleNamespace(status=[ghost])
+    engine._on_state_update(alert)
+
+    assert engine.torrents() == []
+    with pytest.raises(EngineError):
+        engine.get(info_hash)
 
 
 # ---------------------------------------------------------------------------

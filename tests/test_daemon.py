@@ -240,6 +240,27 @@ def test_stop_sweeps_after_a_daemon_that_died_without_cleaning_up(running_daemon
     assert not paths.socket_path().exists()
 
 
+def test_a_daemon_that_finds_a_live_peer_spares_its_files(tmp_path, monkeypatch):
+    """Autostart race: the loser — its own probe ran while the winner was
+    still starting its engine, then the stale-socket probe connected to the
+    winner's live socket — must not sweep the winner's files on the way out.
+    Unlinking them would orphan a seeding daemon no RPC can ever reach.
+    """
+    monkeypatch.setattr(daemon_mod.ipc, "daemon_running", lambda: False)
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(paths.socket_path()))
+    listener.listen(1)
+    paths.state_dir().mkdir(parents=True, exist_ok=True)
+    paths.pid_file().write_text("4242\n", encoding="utf-8")
+    try:
+        with pytest.raises(SystemExit, match="already running"):
+            asyncio.run(daemon_mod.serve(_quiet_config(tmp_path)))
+        assert paths.socket_path().exists()
+        assert paths.pid_file().exists()
+    finally:
+        listener.close()
+
+
 # ---------------------------------------------------------------------------
 # The TCP fallback transport (used on Windows, forced on here)
 # ---------------------------------------------------------------------------

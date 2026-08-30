@@ -8,11 +8,25 @@ Engine included. One `pip install`, zero setup — a background daemon keeps
 seeding while a scriptable CLI and a keyboard-driven TUI stay out of your way.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/sowhoia/torsh/ci.yml?style=flat-square&label=ci)](https://github.com/sowhoia/torsh/actions/workflows/ci.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-00e8ff.svg?style=flat-square)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/torsh.svg?style=flat-square&color=ff3cac)](https://pypi.org/project/torsh/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-00e8ff.svg?style=flat-square)](https://www.python.org/downloads/)
 [![Powered by libtorrent](https://img.shields.io/badge/engine-libtorrent%202.0-8f7fff.svg?style=flat-square)](https://libtorrent.org)
 [![Built with Textual](https://img.shields.io/badge/TUI-Textual-2effa8.svg?style=flat-square)](https://textual.textualize.io/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-6b7394.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/license-MIT-6b7394.svg?style=flat-square)](LICENSE)
+
+<br>
+
+<img src="docs/assets/tui-overview.png" alt="The torsh dashboard: a live torrent table with progress bars, speed sparklines, and a details panel" width="100%">
+
+<sub>**The dashboard.** Live table, speed sparklines, a details panel —
+overview, files, peers and trackers for whatever the cursor is on.</sub>
+
+<br>
+
+<img src="docs/assets/tui-demo.gif" alt="Demo: typing in the fuzzy filter narrows the torrent list live, then the command palette opens" width="90%">
+
+<sub>**Type to filter, `ctrl+p` for everything.** The fuzzy filter narrows the
+list as you type; the command palette holds every action torsh can do.</sub>
 
 </div>
 
@@ -33,14 +47,12 @@ torsh add "magnet:?xt=…"     # daemon autostarts, download begins
 torsh                        # watch it in the TUI; quit — it keeps going
 ```
 
-## ✨ Highlights
-
 | | |
 |---|---|
 | 🔋 **Batteries included** | Embedded libtorrent engine — no external daemon, no sudo, no RPC passwords |
 | 👻 **Background daemon** | Spawned on demand over a private Unix socket; downloads survive closing the UI |
 | ⚡ **Scriptable CLI** | `add · ls · get · pause · rm …` with humane selectors and `--json` everywhere |
-| 🖥 **Live dashboard** | Fuzzy filter, multi-select, files/peers/trackers, speed sparklines, command palette (`ctrl+p`) |
+| 🖥 **Live dashboard** | Fuzzy filter, multi-select, files/peers/trackers, speed sparklines, command palette |
 | 🎬 **Streaming mode** | Sequential download per torrent (`torsh seq movie on`) — watch while it fetches |
 | 🎯 **Per-file control** | Priorities incl. skip: `torsh prio ubuntu 3=skip 0=high` |
 | 🔢 **Queue control** | `torsh queue ubuntu top` jumps the line; `shift+↑/↓` in the TUI |
@@ -83,9 +95,16 @@ $ torsh export ubuntu ~/torrents/     # metadata back out as a .torrent
 $ torsh rm done -y                    # clear out everything finished
 ```
 
-Every command that targets torrents takes **selectors**: an id (`3`), a name
-substring (`ubuntu`), an infohash prefix (`e2467d`), or a group —
-`all` / `active` / `paused` / `done` / `seeding` / `downloading` / `errored`.
+Every command that targets torrents takes **selectors** — no copy-pasting
+infohashes:
+
+| `torsh …` | means |
+|---|---|
+| `3` | the torrent with id 3 |
+| `ubuntu` | any name containing *ubuntu* |
+| `e2467d` | any infohash with this prefix |
+| `all` · `active` · `paused` · `done` | groups |
+| `seeding` · `downloading` · `errored` | …more groups |
 
 One-shot downloads, `wget`-style — Ctrl+C detaches instead of killing:
 
@@ -120,9 +139,19 @@ grep -o 'magnet:[^"]*' page.html | torsh add - --paused
 
 ## 🖥 The TUI
 
-`torsh` with no arguments opens the dashboard: live table with per-row
-progress, speed sparklines, a details panel (overview / files / peers /
-trackers), toast notifications when downloads finish.
+`torsh` with no arguments opens the dashboard. The details panel follows the
+cursor — per-file priorities, who you're swapping bytes with, what the
+trackers say:
+
+<div align="center">
+<table><tr>
+<td><img src="docs/assets/tui-files.png" alt="Files tab: per-file progress and priorities of a multi-file torrent" width="100%"></td>
+<td><img src="docs/assets/tui-peers.png" alt="Peers tab: connected peers with client, speeds and completion" width="100%"></td>
+</tr></table>
+<sub><b>Files</b> — progress and priority per file · <b>Peers</b> — client, speeds, completion</sub>
+</div>
+
+<br>
 
 - **`ctrl+p`** — command palette: every action, fuzzy-searchable
 - **`/`** — fuzzy filter as you type · **`f`** cycles status filters
@@ -130,6 +159,15 @@ trackers), toast notifications when downloads finish.
 - **`space`** pause/resume · **`d`** remove (keep or delete files) · **`s`** streaming mode
 - **`shift+↑/↓`** — move a torrent up or down the download queue
 - **`1–8`** or click a header to sort · **`i`** details · **`?`** everything else
+
+<div align="center">
+
+<img src="docs/assets/tui-palette.png" alt="The command palette listing every torsh action" width="75%">
+
+<sub>**`ctrl+p`, then type.** Add, pause everything, move a torrent to the top
+of the queue — all discoverable from the keyboard.</sub>
+
+</div>
 
 Quit freely — the daemon keeps seeding. `torsh daemon stop` when you mean it.
 
@@ -162,8 +200,34 @@ autostart = true            # any command may start the daemon
 environment (plus `TORSH_SOCKET` / `TORSH_DEBUG` for the adventurous).
 State — resume data, session state, logs — lives in `~/.local/state/torsh`;
 the RPC socket sits in a private 0700 directory named `torsh-<uid>` inside the
-system temp dir (`/tmp` on Linux, `$TMPDIR` on macOS), tmux-style — `AF_UNIX`
-paths are too short-capped to live under the state dir.
+system temp dir, tmux-style.
+
+## ❓ FAQ
+
+<details>
+<summary><b>I closed the TUI — is my download still running?</b></summary>
+<br>
+
+Yes. The daemon owns the engine and outlives every frontend. Check in with
+`torsh speed` or `torsh ls --watch`; stop it for real with `torsh daemon stop`.
+</details>
+
+<details>
+<summary><b>Something looks wrong — how do I debug it?</b></summary>
+<br>
+
+`torsh doctor` checks the engine, config, disk space, state dir, daemon and
+DHT in one pass. The daemon log is at `~/.local/state/torsh/daemon.log`
+(`torsh daemon log` tails it).
+</details>
+
+<details>
+<summary><b>Does it work on Windows?</b></summary>
+<br>
+
+Use WSL. Native Windows is not supported — the daemon's shutdown path assumes
+POSIX signals.
+</details>
 
 ## 🛠 Development
 
@@ -192,6 +256,9 @@ The test suite favours integration over mocks: it seeds a real torrent from a
 second libtorrent session and downloads it through the entire stack
 (engine → daemon → socket → CLI).
 
+The README screenshots are real app frames — regenerate them after UI changes
+with `python scripts/make_screenshots.py && python scripts/render_assets.py`.
+
 ## 📝 License
 
-MIT © torsh authors
+MIT © torsh authors — see [LICENSE](LICENSE).

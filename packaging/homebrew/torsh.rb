@@ -1,22 +1,27 @@
+# Tap-style formula: installs torsh (and its PyPI dependencies) into a
+# private virtualenv under libexec. Pip resolves dependencies at install
+# time, which keeps the formula maintenance-free for a personal tap
+# (homebrew-core would require vendored `resource` blocks instead).
 class Torsh < Formula
-  desc "Modern Transmission TUI client for the terminal"
+  desc "Self-contained BitTorrent client for the terminal (engine included)"
   homepage "https://github.com/sowhoia/torsh"
-  version "0.2.0"
+  version "1.0.0"
   # After publishing to PyPI, set sha256 to the sdist hash:
-  #   curl -sL https://pypi.org/pypi/torsh/#{version}/json | jq -r '.urls[] | select(.packagetype=="sdist") | .digests.sha256'
+  #   curl -sL https://pypi.org/pypi/torsh/json | jq -r '.urls[] | select(.packagetype=="sdist") | .digests.sha256'
   url "https://files.pythonhosted.org/packages/source/t/torsh/torsh-#{version}.tar.gz"
   sha256 "<fill-me>"
+  license "MIT"
 
-  depends_on "python@3.11"
-  depends_on "pipx" => :build
+  depends_on "python@3.12"
 
   def install
-    system "pipx", "install", "--spec", buildpath.to_s, "torsh"
-    bin.install_symlink Dir.home/".local/pipx/venvs/torsh/bin/torsh"
+    python = Formula["python@3.12"].opt_bin/"python3.12"
+    system python, "-m", "venv", libexec
+    system libexec/"bin/pip", "install", "--no-cache-dir", buildpath
+    bin.install_symlink libexec/"bin/torsh"
   end
 
   test do
-    system "#{bin}/torsh", "--version"
+    assert_match version.to_s, shell_output("#{bin}/torsh --version")
   end
 end
-

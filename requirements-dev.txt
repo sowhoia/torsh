@@ -1,1 +1,8 @@
-pytest>=7.4.0
+# Mirrors [project.optional-dependencies].dev in pyproject.toml, which is the
+# source of truth (`pip install -e '.[dev]'`). tests/test_packaging.py fails
+# if the two ever drift apart.
+pytest>=8.0
+pytest-asyncio>=0.24
+pytest-cov>=5.0
+ruff>=0.8
+mypy>=1.11

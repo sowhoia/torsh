@@ -1,24 +1,41 @@
 APP?=torsh
-VERSION?=$(shell python3 -c "import torsh;print(torsh.__version__)" 2>/dev/null || echo 0.1.0)
+VERSION?=$(shell python3 -c "import torsh;print(torsh.__version__)" 2>/dev/null || echo 1.0.0)
 DIST_DIR:=dist
+PY:=.venv/bin/python
 
-.PHONY: dist sdist wheel deb rpm brew clean test check
+.PHONY: dev test cov fmt lint check run dist brew clean
 
-dist: sdist wheel
+## Development
 
-sdist wheel:
+dev:                            ## create a venv and install torsh editable + dev deps
+	uv venv .venv --python 3.12
+	uv pip install --python $(PY) -e '.[dev]'
+
+test:                           ## run the test suite
+	$(PY) -m pytest
+
+cov:                            ## run the suite with a coverage report
+	$(PY) -m pytest --cov --cov-report=term-missing
+
+fmt:                            ## reformat the tree (ruff format)
+	$(PY) -m ruff format torsh tests
+
+lint:                           ## static checks (ruff lint + format + mypy)
+	$(PY) -m ruff check torsh tests
+	$(PY) -m ruff format --check torsh tests
+	$(PY) -m mypy
+
+check: lint                     ## lint + byte-compile sanity check
+	$(PY) -m compileall -q torsh
+
+run:                            ## launch the TUI from the venv
+	$(PY) -m torsh
+
+## Packaging
+
+dist:                           ## build sdist + wheel into dist/
 	python3 -m pip install --upgrade build
 	python3 -m build
-
-deb:
-	python3 -m pip install --upgrade build fpm
-	python3 -m build
-	fpm -s python -t deb --python-bin python3 .
-
-rpm:
-	python3 -m pip install --upgrade build fpm
-	python3 -m build
-	fpm -s python -t rpm --python-bin python3 .
 
 brew:
 	@echo "Update url/sha256 in packaging/homebrew/torsh.rb before running."
@@ -26,10 +43,3 @@ brew:
 
 clean:
 	rm -rf $(DIST_DIR) build *.egg-info
-
-test:
-	python3 -m pytest
-
-check:
-	python3 -m compileall torsh
-

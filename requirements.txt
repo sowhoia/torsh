@@ -1,7 +1,10 @@
-textual>=0.60.0
-transmission-rpc>=4.4.3
-click>=8.1.7
-pyyaml>=6.0.1
-humanize>=4.9.0
-
-
+# Mirrors [project].dependencies in pyproject.toml, which is the source of
+# truth (`pip install torsh`). tests/test_packaging.py fails if the two ever
+# drift apart.
+libtorrent>=2.0.9
+textual>=1.0,<9
+rich>=13.7
+click>=8.1
+rich-click>=1.8
+tomli-w>=1.0
+tomli>=2.0; python_version < "3.11"

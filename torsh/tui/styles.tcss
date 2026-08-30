@@ -1,0 +1,265 @@
+/* torsh TUI — layout and chrome. Colours come from the registered theme. */
+
+Screen {
+    layers: base;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+
+#header {
+    dock: top;
+    height: 3;
+    background: $panel;
+    border-bottom: hkey $primary 30%;
+    layout: horizontal;
+    padding: 0 1;
+}
+
+#brand {
+    width: auto;
+    content-align: left middle;
+    height: 100%;
+    color: $primary;
+    text-style: bold;
+    padding: 0 2 0 1;
+}
+
+#session-line {
+    width: 1fr;
+    height: 100%;
+    content-align: left middle;
+    color: $foreground 70%;
+}
+
+/* Narrow terminals: the sparklines cost ~40 columns the session line needs. */
+#header.-compact .spark-box {
+    display: none;
+}
+
+.spark-box {
+    width: auto;
+    height: 100%;
+    padding: 0 1;
+    align-vertical: middle;
+    layout: horizontal;
+}
+
+.spark-label {
+    width: auto;
+    height: 100%;
+    content-align: center middle;
+    text-style: bold;
+    padding: 0 1 0 0;
+}
+
+.spark-label.-down { color: $primary; }
+.spark-label.-up   { color: $success; }
+
+Sparkline {
+    /* No top margin: the box centres its children, and a margin would push
+       the bars one row below their ↓/↑ labels. */
+    width: 18;
+    height: 1;
+}
+
+#spark-down > .sparkline--max-color { color: $primary; }
+#spark-down > .sparkline--min-color { color: $primary 30%; }
+#spark-up > .sparkline--max-color   { color: $success; }
+#spark-up > .sparkline--min-color   { color: $success 30%; }
+
+/* ── Filter bar ─────────────────────────────────────────────────────── */
+
+#filter-bar {
+    dock: top;
+    height: 0;
+    background: $surface;
+    padding: 0 1;
+    layout: horizontal;
+}
+
+#filter-bar.-visible {
+    height: 3;
+    border-bottom: solid $panel;
+}
+
+#filter-input {
+    width: 1fr;
+    border: round $primary 50%;
+    background: $background;
+}
+
+#filter-input:focus {
+    border: round $primary;
+}
+
+/* ── Main area ──────────────────────────────────────────────────────── */
+
+#main {
+    layout: horizontal;
+    height: 1fr;
+}
+
+#torrents {
+    width: 1fr;
+    height: 100%;
+    scrollbar-gutter: stable;
+}
+
+DataTable > .datatable--header {
+    background: $panel;
+    color: $foreground 60%;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: $primary 22%;
+    text-style: bold;
+}
+
+#details {
+    width: 44;
+    max-width: 50%;
+    height: 100%;
+    border-left: solid $panel;
+    background: $surface;
+    display: none;
+}
+
+#details.-visible {
+    display: block;
+}
+
+#details TabbedContent {
+    height: 1fr;
+}
+
+#details TabPane {
+    padding: 0 1;
+}
+
+#overview-body {
+    padding: 1 1;
+}
+
+#files-table, #peers-table, #trackers-table {
+    height: 1fr;
+}
+
+/* ── Status bar ─────────────────────────────────────────────────────── */
+
+#status-bar {
+    dock: bottom;
+    height: 1;
+    background: $panel;
+    color: $foreground 60%;
+    padding: 0 1;
+}
+
+/* ── Modals ─────────────────────────────────────────────────────────── */
+
+TorshModal {
+    align: center middle;
+    background: $background 60%;
+}
+
+.dialog {
+    width: 64;
+    max-width: 90%;
+    height: auto;
+    max-height: 85%;
+    background: $surface;
+    border: round $primary 70%;
+    padding: 1 2;
+}
+
+.dialog-wide {
+    width: 90;
+}
+
+/* The key reference is the tallest dialog: give it a resolved height so the
+   body can scroll instead of clipping (a clipped dialog hides its own Close
+   button on short terminals). */
+#help-dialog {
+    /* A resolved height (not auto) is what lets the body below take 1fr and
+       scroll, keeping the Close button on screen at any terminal size. */
+    height: 90%;
+    max-height: 38;
+}
+
+#help-scroll {
+    height: 1fr;
+    scrollbar-gutter: stable;
+}
+
+.dialog-title {
+    text-style: bold;
+    color: $primary;
+    padding-bottom: 1;
+}
+
+.dialog-body {
+    color: $foreground 75%;
+    padding-bottom: 1;
+}
+
+.dialog-error {
+    color: $error;
+    height: auto;
+}
+
+.dialog Label {
+    color: $foreground 60%;
+    padding-top: 1;
+}
+
+.dialog Input {
+    margin-top: 0;
+}
+
+.dialog TextArea {
+    height: 6;
+    margin-top: 0;
+}
+
+.dialog RadioSet {
+    margin-top: 1;
+    background: transparent;
+    border: none;
+}
+
+.dialog DataTable {
+    height: 16;
+    margin-top: 1;
+}
+
+.switch-row {
+    height: 3;
+    align-vertical: middle;
+    padding-top: 1;
+}
+
+.switch-label {
+    padding: 1 3 0 1;
+}
+
+.buttons {
+    height: 3;
+    align-horizontal: right;
+    padding-top: 1;
+}
+
+.buttons Button {
+    margin-left: 2;
+    min-width: 10;
+}
+
+/* ── Toasts ─────────────────────────────────────────────────────────── */
+
+Toast {
+    background: $surface;
+    border-left: thick $primary;
+}
+
+Toast.-information { border-left: thick $success; }
+Toast.-warning     { border-left: thick $warning; }
+Toast.-error       { border-left: thick $error; }

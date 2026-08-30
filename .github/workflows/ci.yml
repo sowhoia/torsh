@@ -1,0 +1,92 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install -e '.[dev]'
+
+      - name: Lint
+        run: python -m ruff check torsh tests
+
+      - name: Format
+        run: python -m ruff format --check torsh tests
+
+      - name: Types
+        run: python -m mypy
+
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+
+      - name: Byte-compile
+        run: python -m compileall -q torsh
+
+      - name: Test
+        run: python -m pytest -q
+
+  # An editable install hides packaging bugs: package-data that never ships
+  # (the TUI's stylesheet) only breaks once someone installs the wheel.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install the wheel into a clean venv and use it
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --quiet dist/*.whl
+          /tmp/smoke/bin/torsh --version
+          /tmp/smoke/bin/torsh --help
+          /tmp/smoke/bin/torsh config path
+          /tmp/smoke/bin/python - <<'PY'
+          from pathlib import Path
+          import torsh, torsh.tui
+          root = Path(torsh.__file__).parent
+          for shipped in (root / "py.typed", root / "tui" / "styles.tcss"):
+              assert shipped.is_file(), f"missing from the wheel: {shipped.name}"
+          print("packaged data present, torsh", torsh.__version__)
+          PY

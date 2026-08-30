@@ -9,7 +9,7 @@ class Torsh < Formula
   # After publishing to PyPI, set sha256 to the sdist hash:
   #   curl -sL https://pypi.org/pypi/torsh/json | jq -r '.urls[] | select(.packagetype=="sdist") | .digests.sha256'
   url "https://files.pythonhosted.org/packages/source/t/torsh/torsh-#{version}.tar.gz"
-  sha256 "<fill-me>"
+  sha256 "40001319eee2d58e0ba9b0e7d1eef51b9d15b6a59b2cae68eeb6bae7832cd482"
   license "MIT"
 
   depends_on "python@3.12"
